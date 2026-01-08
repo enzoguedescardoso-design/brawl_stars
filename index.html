@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"/>
-<title>MOBA Heist MVP — Mobile / Desktop (Velocidade Corrigida) — Bots Desgrudando — Joysticks</title>
+<title>MOBA Heist MVP — Mobile / Desktop (Velocidade Corrigida) — Bots Desgrudando — Joysticks + Super (Super Left) — Mortis</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
 <style>
   :root{
@@ -159,6 +159,13 @@
   .left-joy { left: 18px; }
   .right-joy { right: 18px; }
 
+  /* smaller joysticks (used for right and super on mobile) */
+  .small-joy { width: 110px; height: 110px; }
+  .small-joy .joy-knob { width: 44px; height: 44px; }
+
+  /* super joystick positioned above right joystick - moved slightly left toward center */
+  .super-joy { right: 72px; bottom: 110px; }
+
   @media (max-width:720px){
     #controls { top:8px; right:8px; }
     .card-panel { width:90vw; min-width:unset; }
@@ -194,23 +201,27 @@
   <div class="card-panel">
     <h2 style="margin:0 0 8px 0">Escolha sua classe</h2>
     <div style="display:flex; justify-content:center; gap:10px; flex-wrap:wrap;">
-      <div class="choice" onclick="startGame('sniper')">
-        <div style="font-size:16px; font-weight:900; margin-bottom:4px;">Sniper</div>
+      <div class="choice" onclick="startGame('piper')">
+        <div style="font-size:16px; font-weight:900; margin-bottom:4px;">Piper</div>
         <small style="display:block; margin-top:4px; font-weight:700">Long range • baixo HP</small>
       </div>
-      <div class="choice" onclick="startGame('tank')">
-        <div style="font-size:16px; font-weight:900; margin-bottom:4px;">Tank</div>
+      <div class="choice" onclick="startGame('bull')">
+        <div style="font-size:16px; font-weight:900; margin-bottom:4px;">Bull</div>
         <small style="display:block; margin-top:4px; font-weight:700">Alta vida • curto alcance</small>
       </div>
-      <div class="choice" onclick="startGame('shotgun')">
-        <div style="font-size:16px; font-weight:900; margin-bottom:4px;">Shotgun</div>
+      <div class="choice" onclick="startGame('shelly')">
+        <div style="font-size:16px; font-weight:900; margin-bottom:4px;">Shelly</div>
         <small style="display:block; margin-top:4px; font-weight:700">Ataque em cone • médio</small>
+      </div>
+      <div class="choice" onclick="startGame('mortis')">
+        <div style="font-size:16px; font-weight:900; margin-bottom:4px;">Mortis</div>
+        <small style="display:block; margin-top:4px; font-weight:700">Dash • causa dano ao colidir</small>
       </div>
     </div>
     <div style="text-align:center; margin-top:10px; font-size:13px; opacity:0.95">
-      Controles Desktop: <strong>W A S D</strong> para mover • Mouse para mirar • Clique esquerdo para atirar
+      Controles Desktop: <strong>W A S D</strong> para mover • Mouse para mirar • Clique esquerdo para atirar (Mortis: dash) • Clique direito para Super (quando carregado)
       <br/>
-      Controles Mobile: use os analógicos (esquerdo = mover, direito = mirar e atirar).
+      Controles Mobile: use os analógicos (esquerdo = mover, direito = mirar e atirar). Pequeno analógico acima do direito para disparar a Super (quando carregada).
     </div>
   </div>
 </div>
@@ -219,12 +230,16 @@
 <div id="leftJoy" class="joystick left-joy" aria-hidden="true">
   <div class="joy-base"><div class="joy-knob" id="leftKnob"></div></div>
 </div>
-<div id="rightJoy" class="joystick right-joy" aria-hidden="true">
+<div id="rightJoy" class="joystick right-joy small-joy" aria-hidden="true">
   <div class="joy-base"><div class="joy-knob" id="rightKnob"></div></div>
+</div>
+<!-- super joystick (menor) -->
+<div id="superJoy" class="joystick super-joy small-joy" aria-hidden="true" style="display:none;">
+  <div class="joy-base"><div class="joy-knob" id="superKnob"></div></div>
 </div>
 
 <script>
-/* ----- Config e utilitários (motor reescrito com suporte a joysticks mobile) ----- */
+/* ----- Config e utilitários (motor reescrito com suporte a joysticks mobile e super) ----- */
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const overlay = document.getElementById('overlay');
@@ -238,8 +253,10 @@ const chooseMobile = document.getElementById('chooseMobile');
 
 const leftJoyEl = document.getElementById('leftJoy');
 const rightJoyEl = document.getElementById('rightJoy');
+const superJoyEl = document.getElementById('superJoy');
 const leftKnob = document.getElementById('leftKnob');
 const rightKnob = document.getElementById('rightKnob');
+const superKnob = document.getElementById('superKnob');
 
 const WORLD = { w:1600, h:900 };
 const camera = { x:0, y:0 };
@@ -247,15 +264,16 @@ let loopStarted = false;
 
 // Velocidades aumentadas levemente conforme pedido
 const CLASSES = {
-  sniper: { hp:300, dmg:120, speed:3.9, range:550, spread:0, shots:1, ammoRecharge:1.8, attackCooldown:1.5 },
-  tank:   { hp:700, dmg:50,  speed:2.6, range:80,  spread:0, shots:1, ammoRecharge:2.2, attackCooldown:1.2 },
-  shotgun:{ hp:450, dmg:60,  speed:3.4, range:160, spread:Math.PI/5, shots:5, ammoRecharge:2.0, attackCooldown:1.7 }
+  piper: { hp:300, dmg:120, speed:3.9, range:500, spread:0, shots:1, ammoRecharge:1.8, attackCooldown:1.5 },
+  bull:   { hp:700, dmg:50,  speed:2.6, range:100,  spread:Math.PI/5, shots:6, ammoRecharge:2.2, attackCooldown:1.2 },
+  shelly: { hp:450, dmg:60,  speed:3.4, range:250, spread:Math.PI/5, shots:5, ammoRecharge:2.0, attackCooldown:1.7 },
+  mortis: { hp:380, dmg:60, speed:3.8, range:110, spread:0, shots:1, ammoRecharge:1.6, attackCooldown:2.0 }
 };
 
 let entities = [], bullets = [], bushes = [], walls = [];
 let player = null;
 let running = false;
-let currentClass = 'sniper';
+let currentClass = 'piper';
 let mouse = { x:0, y:0, down:false };
 let keys = {};
 let isMobile = false;         // plataforma escolhida
@@ -289,10 +307,26 @@ window.addEventListener('mouseup', e=>{ if(!isMobile && e.button===0) mouse.down
 window.addEventListener('keydown', e=> keys[e.key.toLowerCase()] = true);
 window.addEventListener('keyup', e=> keys[e.key.toLowerCase()] = false);
 
+/* Prevent context menu and use right click as Super on desktop */
+window.addEventListener('contextmenu', (ev)=>{
+  ev.preventDefault();
+  if(isMobile) return;
+  if(!player || !running || !player.alive) return;
+  // compute mouse world coords from event position
+  const r = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / r.width;
+  const scaleY = canvas.height / r.height;
+  const mx = (ev.clientX - r.left) * scaleX + camera.x;
+  const my = (ev.clientY - r.top) * scaleY + camera.y;
+  const ang = Math.atan2(my - player.y, mx - player.x);
+  fireSuper(player, ang);
+});
+
 /* ----- Joystick implementation (mobile) ----- */
 function setJoystickVisible(visible){
   leftJoyEl.style.display = visible ? 'block' : 'none';
   rightJoyEl.style.display = visible ? 'block' : 'none';
+  superJoyEl.style.display = visible ? 'block' : 'none';
 }
 
 function getCenterRect(el){
@@ -304,12 +338,9 @@ function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
 function dist(x1,y1,x2,y2){ return Math.hypot(x2-x1, y2-y1); }
 
 /* Joystick state objects */
-const leftStick = {
-  active:false, id:null, cx:0, cy:0, max:48, vx:0, vy:0
-};
-const rightStick = {
-  active:false, id:null, cx:0, cy:0, max:48, ang:0, mag:0
-};
+const leftStick = { active:false, id:null, cx:0, cy:0, max:48, vx:0, vy:0 };
+const rightStick = { active:false, id:null, cx:0, cy:0, max:48, ang:0, mag:0 };
+const superStick = { active:false, id:null, cx:0, cy:0, max:36, ang:0, mag:0 }; // menor
 
 function onLeftStart(t){
   leftStick.active = true;
@@ -329,7 +360,6 @@ function onLeftEnd(t){
   leftStick.vx = 0; leftStick.vy = 0;
   leftKnob.style.transform = `translate(0px,0px)`;
 }
-
 function updateLeftKnob(cx, cy){
   const dx = cx - leftStick.cx;
   const dy = cy - leftStick.cy;
@@ -361,7 +391,6 @@ function onRightEnd(t){
   rightStick.ang = 0; rightStick.mag = 0;
   rightKnob.style.transform = `translate(0px,0px)`;
 }
-
 function updateRightKnob(cx, cy){
   const dx = cx - rightStick.cx;
   const dy = cy - rightStick.cy;
@@ -373,6 +402,42 @@ function updateRightKnob(cx, cy){
   rightKnob.style.transform = `translate(${nx}px, ${ny}px)`;
   rightStick.ang = Math.atan2(ny, nx);
   rightStick.mag = nd / maxd; // 0..1
+}
+
+/* Super joystick handlers (menor) */
+function onSuperStart(t){
+  superStick.active = true;
+  superStick.id = t.identifier;
+  const c = getCenterRect(superJoyEl);
+  superStick.cx = c.cx;
+  superStick.cy = c.cy;
+  updateSuperKnob(t.clientX, t.clientY);
+}
+function onSuperMove(t){
+  if(!superStick.active || t.identifier !== superStick.id) return;
+  updateSuperKnob(t.clientX, t.clientY);
+}
+function onSuperEnd(t){
+  if(!superStick.active || t.identifier !== superStick.id) return;
+  // if magnitude high enough and player has super, fire it
+  if(player && player.alive && player.superCharge >= 10 && superStick.mag > 0.18){
+    fireSuper(player, superStick.ang);
+  }
+  superStick.active = false; superStick.id = null;
+  superStick.ang = 0; superStick.mag = 0;
+  superKnob.style.transform = `translate(0px,0px)`;
+}
+function updateSuperKnob(cx, cy){
+  const dx = cx - superStick.cx;
+  const dy = cy - superStick.cy;
+  const d = Math.hypot(dx,dy) || 0.0001;
+  const maxd = superStick.max;
+  const nd = Math.min(d, maxd);
+  const nx = dx / d * nd;
+  const ny = dy / d * nd;
+  superKnob.style.transform = `translate(${nx}px, ${ny}px)`;
+  superStick.ang = Math.atan2(ny, nx);
+  superStick.mag = nd / maxd;
 }
 
 /* Attach touch handlers to joystick elements */
@@ -410,6 +475,24 @@ rightJoyEl.addEventListener('touchend', (ev)=>{
 rightJoyEl.addEventListener('touchcancel', (ev)=>{
   ev.preventDefault();
   for(const t of ev.changedTouches) onRightEnd(t);
+}, { passive: false });
+
+superJoyEl.addEventListener('touchstart', (ev)=>{
+  ev.preventDefault();
+  const t = ev.changedTouches[0];
+  onSuperStart(t);
+}, { passive: false });
+superJoyEl.addEventListener('touchmove', (ev)=>{
+  ev.preventDefault();
+  for(const t of ev.changedTouches) onSuperMove(t);
+}, { passive: false });
+superJoyEl.addEventListener('touchend', (ev)=>{
+  ev.preventDefault();
+  for(const t of ev.changedTouches) onSuperEnd(t);
+}, { passive: false });
+superJoyEl.addEventListener('touchcancel', (ev)=>{
+  ev.preventDefault();
+  for(const t of ev.changedTouches) onSuperEnd(t);
 }, { passive: false });
 
 /* Prevent canvas default touch actions (we use joysticks instead) */
@@ -454,7 +537,10 @@ function spawn(team, x, y, cls, isPlayer=false){
     // jitter seed to break perfect symmetry
     _jit: Math.random() * Math.PI * 2,
     // offset único para flanquear/evitar todos apontarem pro mesmo pixel
-    _offset: { x: (Math.random()*2-1)*60, y: (Math.random()*2-1)*60 }
+    _offset: { x: (Math.random()*2-1)*60, y: (Math.random()*2-1)*60 },
+    superCharge:0, // <--- super meter (0..10)
+    // dash props (para Mortis)
+    isDashing:false, dashEnd:0, dashVx:0, dashVy:0, dashHitSet: new Set()
   };
   entities.push(e);
   if(isPlayer) player = e;
@@ -463,6 +549,19 @@ function spawn(team, x, y, cls, isPlayer=false){
 
 function rectCircleCollide(rx,ry,rw,rh,cx,cy,r){ const closestX = clamp(cx, rx, rx+rw); const closestY = clamp(cy, ry, ry+rh); const dx = cx-closestX; const dy = cy-closestY; return dx*dx + dy*dy <= r*r; }
 function circleCircleCollide(x1,y1,r1,x2,y2,r2){ return (x2-x1)*(x2-x1)+(y2-y1)*(y2-y1) <= (r1+r2)*(r1+r2); }
+
+/* ======== ADDED: collidesWithWalls (fix para ReferenceError) ========
+   Verifica colisões com cada parede e com os limites do mapa.
+   Retorna true se o círculo (cx,cy,radius) colidir com paredes ou ultrapassar limites.
+   =================================================================== */
+function collidesWithWalls(cx, cy, radius){
+  for(const w of walls){
+    if(rectCircleCollide(w.x, w.y, w.w, w.h, cx, cy, radius)) return true;
+  }
+  if(cx - radius < 0 || cy - radius < 0 || cx + radius > WORLD.w || cy + radius > WORLD.h) return true;
+  return false;
+}
+/* ================================================================== */
 
 function moveAI(e, tx, ty){
   const angle = Math.atan2(ty - e.y, tx - e.x);
@@ -487,43 +586,101 @@ function moveAI(e, tx, ty){
   e.y += Math.sin(angle + Math.PI) * 0.8;
 }
 
-function collidesWithWalls(x, y, radius){
-  for(const w of walls) if(rectCircleCollide(w.x, w.y, w.w, w.h, x, y, radius)) return true;
-  if(x - radius < 0 || y - radius < 0 || x + radius > WORLD.w || y + radius > WORLD.h) return true;
-  return false;
+/* ----- Tiro normal e Super (super = normal +3 de dano) ----- */
+function startDash(e, angle, durationSec, dashSpeed, damage){
+  if(!e.alive) return;
+  const now = performance.now()/1000;
+  e.isDashing = true;
+  e.dashEnd = now + durationSec;
+  e.dashVx = Math.cos(angle) * dashSpeed;
+  e.dashVy = Math.sin(angle) * dashSpeed;
+  e.dashHitSet = new Set();
+  // Mortis dashes do not consume ammo by design (optional). Super carrega apenas quando o ataque acerta um inimigo.
 }
 
 function fire(e, angle){
   if(!e.alive) return;
   const t = performance.now()/1000;
-  if(t - e.lastShot < e.attackCooldown) return;
+  if(t - (e.lastShot || -999) < e.attackCooldown) return;
   if(e.ammo <= 0) return;
   e.lastShot = t;
   e.lastShotAt = t;
   e.ammo -= 1;
   e.lastAmmoTime = t;
-  if(e.shots === 1) createBullet(e, angle);
+  // cada vez que dispara (ataque normal) acumula 1 de super (max 10)
+  
+
+  if(e.classType === 'mortis'){
+    // Mortis: realiza um curto dash que causa dano igual ao shelly ao colidir com brawlers
+    // dash parameters: short duration, fast speed
+    const dashDuration = 0.18; // segundos
+    const dashSpeed = 14; // pixels per frame-ish (we'll move by vx/vy each update without dt for snappier dash)
+    const damage = CLASSES.shelly.dmg; // dano igual ao shelly
+    startDash(e, angle, dashDuration, dashSpeed, damage);
+    return;
+  }
+
+  if(e.shots === 1) createBullet(e, angle, e.dmg);
   else {
     const count = e.shots;
     for(let i=0;i<count;i++){
       const frac = (i - (count-1)/2) / ((count-1)/2 || 1);
       const a = angle + frac * (e.spread/2);
-      createBullet(e, a);
+      createBullet(e, a, e.dmg);
     }
   }
 }
-function createBullet(e, angle){
+function fireSuper(e, angle){
+  if(!e.alive) return;
+  if((e.superCharge || 0) < 10) return; // precisa de 10 tiros
+  const t = performance.now()/1000;
+  if(t - (e.lastShot || -999) < e.attackCooldown) return;
+  // Super dispara mesma mecânica, mas +3 dano e consome a carga — não consome munição
+  e.lastShot = t;
+  e.lastShotAt = t;
+  const superDmg = e.dmg + 3;
+  e.superCharge = 0;
+
+  if(e.classType === 'mortis'){
+    // Mortis: super é dash mais longo e +3 de dano
+    const dashDuration = 0.36; // mais longo
+    const dashSpeed = 16;
+    const damage = CLASSES.shelly.dmg + 3;
+    startDash(e, angle, dashDuration, dashSpeed, damage);
+    return;
+  }
+
+  if(e.shots === 1) createBullet(e, angle, superDmg);
+  else {
+    for(let i=0;i<e.shots;i++){
+      const frac = (i - (e.shots-1)/2) / ((e.shots-1)/2 || 1);
+      createBullet(e, angle + frac * (e.spread/2), superDmg);
+    }
+  }
+}
+
+/* Create bullet accepts dmg override */
+function createBullet(e, angle, dmg){
+  // Use max distance based on shooter's range so bullets stop after traveling that distance
+  const projSpd = e.projSpeed || 10; // pixels per frame (kept for motion)
+  const maxRange = (typeof e.range === 'number') ? e.range : 600;
+  const lifeTime = Math.max(0.05, maxRange / projSpd); // fallback time-based life (seconds)
+  const startX = e.x + Math.cos(angle)*(e.radius+6);
+  const startY = e.y + Math.sin(angle)*(e.radius+6);
   bullets.push({
-    x: e.x + Math.cos(angle)*(e.radius+6),
-    y: e.y + Math.sin(angle)*(e.radius+6),
-    vx: Math.cos(angle)*(e.projSpeed || 10),
-    vy: Math.sin(angle)*(e.projSpeed || 10),
+    x: startX,
+    y: startY,
+    vx: Math.cos(angle)*projSpd,
+    vy: Math.sin(angle)*projSpd,
     born: performance.now()/1000,
-    life: 3.0,
+    life: lifeTime,
     ownerId: e.id,
     team: e.team,
-    dmg: e.dmg,
-    r: 4
+    dmg: dmg || e.dmg,
+    r: 4,
+    startX: startX,
+    startY: startY,
+    maxDist: maxRange
   });
 }
 
@@ -547,8 +704,10 @@ function handleRespawns(){
       e.lastDamagedAt = -999;
       e.lastShotAt = -999;
       e.ammo = e.ammoCapacity;
+      e.superCharge = 0;
       // gerar novo offset único para evitar reaparecer empilhado
       e._offset = { x: (Math.random()*2-1)*60, y: (Math.random()*2-1)*60 };
+      e.isDashing = false; e.dashHitSet = new Set();
     }
   }
 }
@@ -566,14 +725,9 @@ function isVisibleTo(src, tgt){
   return false;
 }
 
-/* ------------------------------------------------------------------
-   avoidanceOffset: evita grudar em:
-   - aliados (separation)
-   - inimigos (small repel)
-   - paredes (wall repel)
-   - cofre (cofre repel)
-   Retorna vetor {x,y} para somar ao alvo.
-   ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* avoidanceOffset: evita grudar em aliados, inimigos, paredes e cofres */
+/* ------------------------------------------------------------------ */
 function avoidanceOffset(e){
   let sx = 0, sy = 0;
 
@@ -685,7 +839,9 @@ function aiUpdate(e){
     // mover enquanto atira
     moveAI(e, targetX, targetY);
     if(d <= e.range + 6){
-      fire(e, ang);
+      // se tem super pronto, usa super, senão normal
+      if(e.superCharge >= 10) fireSuper(e, ang);
+      else fire(e, ang);
     }
     return;
   }
@@ -698,7 +854,8 @@ function aiUpdate(e){
   const targetCofreY = enemyCofre.y + enemyCofre.h/2 + avoid.y * avoidScale * 1.1 + e._offset.y * 0.9;
   moveAI(e, targetCofreX, targetCofreY);
   if(dC <= e.range + 24){
-    fire(e, angC);
+    if(e.superCharge >= 10) fireSuper(e, angC);
+    else fire(e, angC);
   }
 }
 
@@ -755,6 +912,12 @@ function updateBullets(dt){
     const p = bullets[i];
     p.x += p.vx;
     p.y += p.vy;
+    // remove by distance (preferred) or by life time as fallback
+    if(p.maxDist !== undefined){
+      const travelled = Math.hypot(p.x - p.startX, p.y - p.startY);
+      if(travelled >= p.maxDist){ bullets.splice(i,1); continue; }
+    }
+    const t = performance.now()/1000;
     if(t - p.born >= p.life){ bullets.splice(i,1); continue; }
     let hitWall = false;
     for(const w of walls) if(rectCircleCollide(w.x,w.y,w.w,w.h, p.x,p.y,p.r)) { hitWall = true; break; }
@@ -775,6 +938,9 @@ function updateBullets(dt){
       if(e.team === p.team) continue;
       if(circleCircleCollide(p.x,p.y,p.r, e.x,e.y, e.radius)){
         damageEntity(e, p.dmg);
+        // carregar super apenas quando o tiro ACERTA um inimigo
+        const owner = entities.find(x => x.id === p.ownerId);
+        if(owner) owner.superCharge = Math.min(10, (owner.superCharge||0) + 1);
         bullets.splice(i,1);
         break;
       }
@@ -804,7 +970,7 @@ function resolveWallCollision(e){
   e.y = clamp(e.y, e.radius, WORLD.h - e.radius);
 }
 
-/* ----- Atualização principal: suporte a joysticks mobile ----- */
+/* ----- Atualização principal: suporte a joysticks mobile e Super ----- */
 let lastTime = performance.now();
 function update(){
   if(!running) return;
@@ -832,17 +998,8 @@ function update(){
       if(mouse.down){
         const ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
         if(performance.now()/1000 - (player.lastShot || -999) >= player.attackCooldown && player.ammo > 0){
-          player.lastShot = performance.now()/1000;
-          player.lastShotAt = performance.now()/1000;
-          player.ammo -= 1;
-          player.lastAmmoTime = performance.now()/1000;
-          if(player.shots === 1) createBullet(player, ang);
-          else {
-            for(let i=0;i<player.shots;i++){
-              const frac = (i - (player.shots-1)/2) / ((player.shots-1)/2 || 1);
-              createBullet(player, ang + frac * (player.spread/2));
-            }
-          }
+          // normal fire increments superCharge
+          fire(player, ang);
         }
       }
     } else {
@@ -862,6 +1019,19 @@ function update(){
         // fire respects attackCooldown and ammo inside fire()
         fire(player, ang);
       }
+
+      // superStick handled on touchend: user aims and releases to fire super
+      // (we also allow continuous super if user keeps touching and mag>threshold -> optional)
+      if(superStick.active && superStick.mag > 0.95){
+        // quick hold-to-fire (rare), but main firing happens on touchend.
+        if(player.superCharge >= 10){
+          fireSuper(player, superStick.ang);
+          // prevent immediate repeat by resetting mag
+          superStick.mag = 0;
+          superKnob.style.transform = `translate(0px,0px)`;
+          superStick.active = false;
+        }
+      }
     }
   }
 
@@ -869,6 +1039,41 @@ function update(){
     tickAmmo(e);
     regenTick(e, dt);
     if(!e.isPlayer) aiUpdate(e);
+
+    // dash movement handling (Mortis only; but generic properties exist)
+    if(e.isDashing){
+      // move by dash velocity (we do not multiply by dt to keep dash snappy)
+      const nextX = e.x + e.dashVx;
+      const nextY = e.y + e.dashVy;
+      // if next position collides with wall, end dash
+      if(collidesWithWalls(nextX, nextY, e.radius)){
+        e.isDashing = false;
+        e.dashVx = 0; e.dashVy = 0;
+        e.dashEnd = 0;
+      } else {
+        e.x = nextX; e.y = nextY;
+        // check collisions with enemies while dashing
+        for(const oth of entities){
+          if(!oth.alive) continue;
+          if(oth.team === e.team) continue;
+          if(e.dashHitSet.has(oth.id)) continue; // already hit this dash
+          if(circleCircleCollide(e.x, e.y, e.radius, oth.x, oth.y, oth.radius)){
+            // damage equal to shelly or dash damage
+            const damage = (e.classType === 'mortis') ? ( (e.dashDamage !== undefined) ? e.dashDamage : CLASSES.shelly.dmg ) : 0;
+            damageEntity(oth, damage);
+            // carregar super quando dash de Mortis acerta um inimigo
+            if(e.classType === 'mortis') e.superCharge = Math.min(10, (e.superCharge||0) + 1);
+            e.dashHitSet.add(oth.id);
+          }
+        }
+        // end dash when time passes
+        if(performance.now()/1000 >= e.dashEnd){
+          e.isDashing = false;
+          e.dashVx = 0; e.dashVy = 0; e.dashEnd = 0;
+          e.dashHitSet = new Set();
+        }
+      }
+    }
   }
 
   // separa entidades sobrepostas (resultado: bots não ficam grudados um no outro)
@@ -1027,6 +1232,17 @@ function drawBrawler(e){
   const cx = e.x, cy = e.y, r = e.radius;
   let centerColor = e.team === 'blue' ? '#2f9cff' : '#ff5555';
   let edgeColor = shade(centerColor, -0.25);
+
+  // se estiver dashando, desenhar um traço rápido atrás dele
+  if(e.isDashing){
+    ctx.beginPath();
+    ctx.moveTo(cx - e.dashVx*1.2, cy - e.dashVy*1.2);
+    ctx.lineTo(cx, cy);
+    ctx.lineWidth = 10;
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.stroke();
+  }
+
   ctx.beginPath();
   ctx.fillStyle = radialGradient(ctx, cx - r*0.3, cy - r*0.4, r, centerColor, edgeColor);
   ctx.arc(cx, cy, r, 0, Math.PI*2);
@@ -1045,15 +1261,22 @@ function drawBrawler(e){
   ctx.beginPath();
   ctx.arc(cx + 4, cy - 2, 2.6, 0, Math.PI*2);
   ctx.fill();
-  if(e.classType === 'tank'){
+  if(e.classType === 'bull'){
     ctx.fillStyle = 'rgba(0,0,0,0.12)';
     ctx.beginPath();
     ctx.rect(cx - r*0.7, cy + r*0.2, r*1.4, 3);
     ctx.fill();
-  } else if(e.classType === 'sniper'){
+  } else if(e.classType === 'piper'){
     ctx.fillStyle = 'rgba(255,255,255,0.06)';
     ctx.beginPath();
     ctx.rect(cx - r*0.2, cy - r*0.9, r*0.4, 6);
+    ctx.fill();
+  } else if(e.classType === 'mortis'){
+    // pequena indicação visual (capuz)
+    ctx.beginPath();
+    ctx.moveTo(cx - r*0.8, cy - r*0.4);
+    ctx.quadraticCurveTo(cx, cy - r*1.2, cx + r*0.8, cy - r*0.4);
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
     ctx.fill();
   }
   const hpRatio = e.hp / e.maxHp;
@@ -1073,6 +1296,13 @@ function drawBrawler(e){
     ctx.strokeStyle = 'rgba(0,0,0,0.25)';
     ctx.lineWidth = 0.8;
     ctx.stroke();
+  }
+  // mostra carga de super sobre o brawler (para o jogador é útil)
+  if(e.isPlayer){
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Super: ${Math.floor(e.superCharge||0)}/10`, e.x, e.y - e.radius - 22);
   }
   ctx.restore();
 }
@@ -1171,7 +1401,10 @@ function draw(){
     ctx.restore();
   }
 
-  topUI.innerHTML = `<span class="cofre-dot cofre-blue"></span> Cofre Azul: ${Math.max(0, Math.round(cofre.blue.hp))} &nbsp;&nbsp; — &nbsp;&nbsp; <span class="cofre-dot cofre-red"></span> Cofre Vermelho: ${Math.max(0, Math.round(cofre.red.hp))}`;
+  // Top UI: cofres + Super do jogador
+  let superText = '';
+  if(player) superText = ` &nbsp;&nbsp; — &nbsp;&nbsp; Super: ${Math.floor(player.superCharge||0)}/10`;
+  topUI.innerHTML = `<span class="cofre-dot cofre-blue"></span> Cofre Azul: ${Math.max(0, Math.round(cofre.blue.hp))} &nbsp;&nbsp; — &nbsp;&nbsp; <span class="cofre-dot cofre-red"></span> Cofre Vermelho: ${Math.max(0, Math.round(cofre.red.hp))}${superText}`;
 }
 
 /* ----- Loop principal ----- */
@@ -1193,11 +1426,11 @@ function spawnTeams(chosenClass){
   const blueSpawnX = cofre.blue.x + cofre.blue.w + 40, blueSpawnY = cofre.blue.y + cofre.blue.h/2;
   const redSpawnX = cofre.red.x - 40, redSpawnY = cofre.red.y + cofre.red.h/2;
   spawn('blue', blueSpawnX, blueSpawnY-60, chosenClass, true);
-  spawn('blue', blueSpawnX, blueSpawnY + 20, 'shotgun');
-  spawn('blue', blueSpawnX, blueSpawnY + 100, 'tank');
-  spawn('red', redSpawnX, redSpawnY-100, 'sniper');
-  spawn('red', redSpawnX, redSpawnY + 20, 'shotgun');
-  spawn('red', redSpawnX, redSpawnY + 100, 'tank');
+  spawn('blue', blueSpawnX, blueSpawnY + 20, 'shelly');
+  spawn('blue', blueSpawnX, blueSpawnY + 100, 'bull');
+  spawn('red', redSpawnX, redSpawnY-100, 'piper');
+  spawn('red', redSpawnX, redSpawnY + 20, 'shelly');
+  spawn('red', redSpawnX, redSpawnY + 100, 'bull');
 }
 
 function startGame(chosenClass){
