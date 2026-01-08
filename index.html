@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"/>
-<title>MOBA Heist MVP — Mobile / Desktop (Velocidade Corrigida)</title>
+<title>MOBA Heist MVP — Mobile / Desktop (Velocidade Corrigida) — Bots Desgrudando — Joysticks</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
 <style>
   :root{
@@ -36,6 +36,7 @@
     background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02));
     image-rendering: optimizeSpeed;
     transform-origin: center;
+    touch-action: none; /* evita pan do navegador */
   }
 
   #topUI{
@@ -119,6 +120,45 @@
   .cofre-blue { background: var(--accent); }
   .cofre-red { background: var(--accent-2); }
 
+  /* Joystick (mobile) */
+  .joystick {
+    position: fixed;
+    bottom: 18px;
+    width: 140px;
+    height: 140px;
+    border-radius: 999px;
+    z-index: 80;
+    display: none; /* aparece apenas no modo mobile via JS */
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    opacity: 0.88;
+    transition: opacity .12s ease, transform .12s ease;
+  }
+  .joy-base {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.06));
+    border: 1px solid rgba(255,255,255,0.06);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+  }
+  .joy-knob {
+    width: 56px;
+    height: 56px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.12);
+    display:block;
+    transform: translate(0,0);
+    transition: transform .04s linear;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.5);
+  }
+  .left-joy { left: 18px; }
+  .right-joy { right: 18px; }
+
   @media (max-width:720px){
     #controls { top:8px; right:8px; }
     .card-panel { width:90vw; min-width:unset; }
@@ -133,7 +173,7 @@
 <div id="topUI"></div>
 
 <div id="controls">
-  <button id="restartBtn" class="btn">Reiniciar</button>
+  <button id="restartBtn" class="btn">Restart</button>
   <button id="menuBtn" class="btn">Menu</button>
 </div>
 
@@ -170,13 +210,21 @@
     <div style="text-align:center; margin-top:10px; font-size:13px; opacity:0.95">
       Controles Desktop: <strong>W A S D</strong> para mover • Mouse para mirar • Clique esquerdo para atirar
       <br/>
-      Controles Mobile: toque e segure na tela para mover; solte para atirar.
+      Controles Mobile: use os analógicos (esquerdo = mover, direito = mirar e atirar).
     </div>
   </div>
 </div>
 
+<!-- Joysticks — aparecerão apenas em mobile -->
+<div id="leftJoy" class="joystick left-joy" aria-hidden="true">
+  <div class="joy-base"><div class="joy-knob" id="leftKnob"></div></div>
+</div>
+<div id="rightJoy" class="joystick right-joy" aria-hidden="true">
+  <div class="joy-base"><div class="joy-knob" id="rightKnob"></div></div>
+</div>
+
 <script>
-/* ----- Config e utilitários (motor reescrito com pequenas correções para mobile) ----- */
+/* ----- Config e utilitários (motor reescrito com suporte a joysticks mobile) ----- */
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const overlay = document.getElementById('overlay');
@@ -188,15 +236,20 @@ const menuBtn = document.getElementById('menuBtn');
 const chooseDesktop = document.getElementById('chooseDesktop');
 const chooseMobile = document.getElementById('chooseMobile');
 
+const leftJoyEl = document.getElementById('leftJoy');
+const rightJoyEl = document.getElementById('rightJoy');
+const leftKnob = document.getElementById('leftKnob');
+const rightKnob = document.getElementById('rightKnob');
+
 const WORLD = { w:1600, h:900 };
 const camera = { x:0, y:0 };
 let loopStarted = false;
 
 // Velocidades aumentadas levemente conforme pedido
 const CLASSES = {
-  sniper: { hp:300, dmg:120, speed:3.9, range:550, spread:0, shots:1, ammoRecharge:1.8, attackCooldown:0.4 },
-  tank:   { hp:700, dmg:50,  speed:2.6, range:80,  spread:0, shots:1, ammoRecharge:2.2, attackCooldown:0.6 },
-  shotgun:{ hp:450, dmg:60,  speed:3.4, range:160, spread:Math.PI/5, shots:5, ammoRecharge:2.0, attackCooldown:0.9 }
+  sniper: { hp:300, dmg:120, speed:3.9, range:550, spread:0, shots:1, ammoRecharge:1.8, attackCooldown:1.5 },
+  tank:   { hp:700, dmg:50,  speed:2.6, range:80,  spread:0, shots:1, ammoRecharge:2.2, attackCooldown:1.2 },
+  shotgun:{ hp:450, dmg:60,  speed:3.4, range:160, spread:Math.PI/5, shots:5, ammoRecharge:2.0, attackCooldown:1.7 }
 };
 
 let entities = [], bullets = [], bushes = [], walls = [];
@@ -206,7 +259,6 @@ let currentClass = 'sniper';
 let mouse = { x:0, y:0, down:false };
 let keys = {};
 let isMobile = false;         // plataforma escolhida
-let touchState = { active:false, x:0, y:0 }; // guarda a posição de toque mais recente
 
 /* Cofres */
 const cofre = {
@@ -237,74 +289,132 @@ window.addEventListener('mouseup', e=>{ if(!isMobile && e.button===0) mouse.down
 window.addEventListener('keydown', e=> keys[e.key.toLowerCase()] = true);
 window.addEventListener('keyup', e=> keys[e.key.toLowerCase()] = false);
 
-/* ----- Input: mobile (touch) ----- */
-function touchToWorld(t){
-  const r = canvas.getBoundingClientRect();
-  // corrige para canvas escalado (CSS) ou dispositivos HiDPI
-  const scaleX = canvas.width / r.width;
-  const scaleY = canvas.height / r.height;
-  const tx = (t.clientX - r.left) * scaleX + camera.x;
-  const ty = (t.clientY - r.top) * scaleY + camera.y;
-  return { x: tx, y: ty };
+/* ----- Joystick implementation (mobile) ----- */
+function setJoystickVisible(visible){
+  leftJoyEl.style.display = visible ? 'block' : 'none';
+  rightJoyEl.style.display = visible ? 'block' : 'none';
 }
-canvas.addEventListener('touchstart', e=>{
-  if(!isMobile) return;
-  e.preventDefault();
-  const t = e.touches[0];
-  const w = touchToWorld(t);
-  touchState.active = true;
-  touchState.x = w.x; touchState.y = w.y;
-  mouse.x = w.x; mouse.y = w.y; mouse.down = true;
+
+function getCenterRect(el){
+  const r = el.getBoundingClientRect();
+  return { cx: r.left + r.width/2, cy: r.top + r.height/2, w: r.width, h: r.height, rect: r };
+}
+
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+function dist(x1,y1,x2,y2){ return Math.hypot(x2-x1, y2-y1); }
+
+/* Joystick state objects */
+const leftStick = {
+  active:false, id:null, cx:0, cy:0, max:48, vx:0, vy:0
+};
+const rightStick = {
+  active:false, id:null, cx:0, cy:0, max:48, ang:0, mag:0
+};
+
+function onLeftStart(t){
+  leftStick.active = true;
+  leftStick.id = t.identifier;
+  const c = getCenterRect(leftJoyEl);
+  leftStick.cx = c.cx;
+  leftStick.cy = c.cy;
+  updateLeftKnob(t.clientX, t.clientY);
+}
+function onLeftMove(t){
+  if(!leftStick.active || t.identifier !== leftStick.id) return;
+  updateLeftKnob(t.clientX, t.clientY);
+}
+function onLeftEnd(t){
+  if(!leftStick.active || t.identifier !== leftStick.id) return;
+  leftStick.active = false; leftStick.id = null;
+  leftStick.vx = 0; leftStick.vy = 0;
+  leftKnob.style.transform = `translate(0px,0px)`;
+}
+
+function updateLeftKnob(cx, cy){
+  const dx = cx - leftStick.cx;
+  const dy = cy - leftStick.cy;
+  const d = Math.hypot(dx,dy) || 0.0001;
+  const maxd = leftStick.max;
+  const nd = Math.min(d, maxd);
+  const nx = dx / d * nd;
+  const ny = dy / d * nd;
+  leftKnob.style.transform = `translate(${nx}px, ${ny}px)`;
+  leftStick.vx = (nx / maxd);
+  leftStick.vy = (ny / maxd);
+}
+
+function onRightStart(t){
+  rightStick.active = true;
+  rightStick.id = t.identifier;
+  const c = getCenterRect(rightJoyEl);
+  rightStick.cx = c.cx;
+  rightStick.cy = c.cy;
+  updateRightKnob(t.clientX, t.clientY);
+}
+function onRightMove(t){
+  if(!rightStick.active || t.identifier !== rightStick.id) return;
+  updateRightKnob(t.clientX, t.clientY);
+}
+function onRightEnd(t){
+  if(!rightStick.active || t.identifier !== rightStick.id) return;
+  rightStick.active = false; rightStick.id = null;
+  rightStick.ang = 0; rightStick.mag = 0;
+  rightKnob.style.transform = `translate(0px,0px)`;
+}
+
+function updateRightKnob(cx, cy){
+  const dx = cx - rightStick.cx;
+  const dy = cy - rightStick.cy;
+  const d = Math.hypot(dx,dy) || 0.0001;
+  const maxd = rightStick.max;
+  const nd = Math.min(d, maxd);
+  const nx = dx / d * nd;
+  const ny = dy / d * nd;
+  rightKnob.style.transform = `translate(${nx}px, ${ny}px)`;
+  rightStick.ang = Math.atan2(ny, nx);
+  rightStick.mag = nd / maxd; // 0..1
+}
+
+/* Attach touch handlers to joystick elements */
+leftJoyEl.addEventListener('touchstart', (ev)=>{
+  ev.preventDefault();
+  const t = ev.changedTouches[0];
+  onLeftStart(t);
 }, { passive: false });
-canvas.addEventListener('touchmove', e=>{
-  if(!isMobile) return;
-  e.preventDefault();
-  const t = e.touches[0];
-  const w = touchToWorld(t);
-  touchState.x = w.x; touchState.y = w.y;
-  mouse.x = w.x; mouse.y = w.y;
+leftJoyEl.addEventListener('touchmove', (ev)=>{
+  ev.preventDefault();
+  for(const t of ev.changedTouches) onLeftMove(t);
+}, { passive: false });
+leftJoyEl.addEventListener('touchend', (ev)=>{
+  ev.preventDefault();
+  for(const t of ev.changedTouches) onLeftEnd(t);
+}, { passive: false });
+leftJoyEl.addEventListener('touchcancel', (ev)=>{
+  ev.preventDefault();
+  for(const t of ev.changedTouches) onLeftEnd(t);
 }, { passive: false });
 
-// touchend: o tiro acontece ao SOLTAR o dedo (apenas 1 tiro por soltada se as condições permitirem)
-canvas.addEventListener('touchend', e=>{
-  if(!isMobile) return;
-  e.preventDefault();
-
-  // faz o disparo em direção à última posição conhecida do toque
-  if(player && player.alive){
-    const ang = Math.atan2(
-      touchState.y - player.y,
-      touchState.x - player.x
-    );
-
-    const tnow = performance.now()/1000;
-    if(tnow - (player.lastShot || -999) >= player.attackCooldown && player.ammo > 0){
-      player.lastShot = tnow;
-      player.lastShotAt = tnow;
-      player.ammo -= 1;
-      player.lastAmmoTime = tnow;
-
-      if(player.shots === 1){
-        createBullet(player, ang);
-      } else {
-        for(let i=0;i<player.shots;i++){
-          const frac = (i - (player.shots-1)/2) / ((player.shots-1)/2 || 1);
-          createBullet(player, ang + frac * (player.spread/2));
-        }
-      }
-    }
-  }
-
-  touchState.active = false;
-  mouse.down = false;
+rightJoyEl.addEventListener('touchstart', (ev)=>{
+  ev.preventDefault();
+  const t = ev.changedTouches[0];
+  onRightStart(t);
+}, { passive: false });
+rightJoyEl.addEventListener('touchmove', (ev)=>{
+  ev.preventDefault();
+  for(const t of ev.changedTouches) onRightMove(t);
+}, { passive: false });
+rightJoyEl.addEventListener('touchend', (ev)=>{
+  ev.preventDefault();
+  for(const t of ev.changedTouches) onRightEnd(t);
+}, { passive: false });
+rightJoyEl.addEventListener('touchcancel', (ev)=>{
+  ev.preventDefault();
+  for(const t of ev.changedTouches) onRightEnd(t);
 }, { passive: false });
 
-canvas.addEventListener('touchcancel', e=>{
-  if(!isMobile) return;
-  e.preventDefault();
-  touchState.active = false;
-  mouse.down = false;
-}, { passive: false });
+/* Prevent canvas default touch actions (we use joysticks instead) */
+canvas.addEventListener('touchmove', e=>{ if(isMobile) e.preventDefault(); }, { passive:false });
+canvas.addEventListener('touchstart', e=>{ if(isMobile) e.preventDefault(); }, { passive:false });
 
 /* ----- Map, spawn, colisões, tiros etc (mantive o mesmo código do motor) ----- */
 function createMap(){
@@ -334,27 +444,30 @@ function spawn(team, x, y, cls, isPlayer=false){
     x,y, vx:0, vy:0,
     team, classType:cls, isPlayer,
     hp:def.hp, maxHp:def.hp, radius:14,
-    // Se for o jogador e estivermos em desktop (isMobile === false), aumente a velocidade em +5
-    speed: (isPlayer && !isMobile) ? (baseSpeed + 2) : baseSpeed,
+    // velocidade igual para bots e jogador no desktop
+    speed: (!isMobile) ? (baseSpeed + 2) : baseSpeed,
     dmg:def.dmg, range:def.range, projSpeed: (def.range>300?12:10),
     shots:def.shots, spread:def.spread, attackCooldown:def.attackCooldown,
     ammoCapacity:3, ammo:3, ammoRecharge:def.ammoRecharge, lastAmmoTime: performance.now()/1000,
     lastShot:-999, lastDamagedAt:-999, alive:true, respawnAt:null,
-    spawnX:x, spawnY:y, state:'idle', target:null
+    spawnX:x, spawnY:y, state:'idle', target:null,
+    // jitter seed to break perfect symmetry
+    _jit: Math.random() * Math.PI * 2,
+    // offset único para flanquear/evitar todos apontarem pro mesmo pixel
+    _offset: { x: (Math.random()*2-1)*60, y: (Math.random()*2-1)*60 }
   };
   entities.push(e);
   if(isPlayer) player = e;
   return e;
 }
 
-function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
-function dist(x1,y1,x2,y2){ return Math.hypot(x2-x1, y2-y1); }
 function rectCircleCollide(rx,ry,rw,rh,cx,cy,r){ const closestX = clamp(cx, rx, rx+rw); const closestY = clamp(cy, ry, ry+rh); const dx = cx-closestX; const dy = cy-closestY; return dx*dx + dy*dy <= r*r; }
 function circleCircleCollide(x1,y1,r1,x2,y2,r2){ return (x2-x1)*(x2-x1)+(y2-y1)*(y2-y1) <= (r1+r2)*(r1+r2); }
 
 function moveAI(e, tx, ty){
   const angle = Math.atan2(ty - e.y, tx - e.x);
   const step = e.speed;
+  // tenta aplicar um passo na direção desejada, usando colisão suave
   let nx = e.x + Math.cos(angle) * step;
   let ny = e.y + Math.sin(angle) * step;
   if(!collidesWithWalls(nx, ny, e.radius)){
@@ -369,6 +482,7 @@ function moveAI(e, tx, ty){
       e.x = nx; e.y = ny; return;
     }
   }
+  // se travou, recua levemente para não empurrar para dentro da parede
   e.x += Math.cos(angle + Math.PI) * 0.8;
   e.y += Math.sin(angle + Math.PI) * 0.8;
 }
@@ -433,6 +547,8 @@ function handleRespawns(){
       e.lastDamagedAt = -999;
       e.lastShotAt = -999;
       e.ammo = e.ammoCapacity;
+      // gerar novo offset único para evitar reaparecer empilhado
+      e._offset = { x: (Math.random()*2-1)*60, y: (Math.random()*2-1)*60 };
     }
   }
 }
@@ -450,6 +566,95 @@ function isVisibleTo(src, tgt){
   return false;
 }
 
+/* ------------------------------------------------------------------
+   avoidanceOffset: evita grudar em:
+   - aliados (separation)
+   - inimigos (small repel)
+   - paredes (wall repel)
+   - cofre (cofre repel)
+   Retorna vetor {x,y} para somar ao alvo.
+   ------------------------------------------------------------------ */
+function avoidanceOffset(e){
+  let sx = 0, sy = 0;
+
+  // parâmetros ajustáveis (mais agressivos para evitar empilhamento)
+  const sepRadius = 72;              // raio de separação entre aliados
+  const wallRepelRadius = 56;
+  const cofreRepelRadius = 96;
+  const sepStrength = 1.6;
+  const enemyRepelStrength = 1.0;
+  const wallRepelStrength = 1.6;
+  const cofreRepelStrength = 1.3;
+
+  // 1) separação de aliados (força maior e baseado em sobreposição)
+  for(const other of entities){
+    if(other.id === e.id) continue;
+    if(!other.alive) continue;
+    if(other.team !== e.team) continue;
+    const d = dist(e.x, e.y, other.x, other.y);
+    if(d > 0 && d < sepRadius){
+      const factor = (sepRadius - d) / sepRadius;
+      sx += (e.x - other.x) / d * factor * sepStrength;
+      sy += (e.y - other.y) / d * factor * sepStrength;
+    }
+  }
+
+  // 2) repelir inimigos se estiverem muito perto (evita empilhar em cima deles)
+  for(const other of entities){
+    if(other.id === e.id) continue;
+    if(!other.alive) continue;
+    if(other.team === e.team) continue;
+    const d = dist(e.x, e.y, other.x, other.y);
+    const enemyRepelRadius = 46 + e.radius + other.radius; // próximo o suficiente
+    if(d > 0 && d < enemyRepelRadius){
+      const factor = (enemyRepelRadius - d) / enemyRepelRadius;
+      sx += (e.x - other.x) / d * factor * enemyRepelStrength;
+      sy += (e.y - other.y) / d * factor * enemyRepelStrength;
+    }
+  }
+
+  // 3) repelir paredes suavemente (empurra para fora antes de encostar)
+  for(const w of walls){
+    const closestX = clamp(e.x, w.x, w.x + w.w);
+    const closestY = clamp(e.y, w.y, w.y + w.h);
+    let dx = e.x - closestX, dy = e.y - closestY;
+    let d = Math.hypot(dx, dy);
+    if(d === 0){
+      // centro do bot exatamente alinhado; empurra para cima arbitrariamente
+      dx = 0; dy = -1; d = 1;
+    }
+    if(d < wallRepelRadius){
+      const factor = (wallRepelRadius - d) / wallRepelRadius;
+      sx += (dx / d) * factor * wallRepelStrength;
+      sy += (dy / d) * factor * wallRepelStrength;
+    }
+  }
+
+  // 4) repelir cofre para não se acumularem diretamente sobre ele
+  const cofreCenters = [
+    {x: cofre.blue.x + cofre.blue.w/2, y: cofre.blue.y + cofre.blue.h/2},
+    {x: cofre.red.x + cofre.red.w/2, y: cofre.red.y + cofre.red.h/2}
+  ];
+  for(const c of cofreCenters){
+    const dx = e.x - c.x, dy = e.y - c.y;
+    const d = Math.hypot(dx, dy) || 0.0001;
+    if(d < cofreRepelRadius){
+      const factor = (cofreRepelRadius - d) / cofreRepelRadius;
+      sx += (dx / d) * factor * cofreRepelStrength;
+      sy += (dy / d) * factor * cofreRepelStrength;
+    }
+  }
+
+  // jitter para quebrar simetria
+  const t = performance.now()/1000;
+  const jitter = 6;
+  sx += Math.cos(t * 1.4 + e._jit) * (jitter * 0.04);
+  sy += Math.sin(t * 1.9 + e._jit) * (jitter * 0.04);
+
+  return { x: sx, y: sy };
+}
+
+/* ----- AI update: usa avoidanceOffset para desgrudar dos aliados, inimigos, paredes e cofres ----- */
 function aiUpdate(e){
   if(e.isPlayer || !e.alive) return;
   const enemies = entities.filter(x => x.team !== e.team && x.alive);
@@ -459,28 +664,69 @@ function aiUpdate(e){
     const d = dist(e.x,e.y,en.x,en.y);
     if(d < cd){ cd = d; closest = en; }
   }
-  const myCofre = e.team === 'blue' ? cofre.blue : cofre.red;
   const enemyCofre = e.team === 'blue' ? cofre.red : cofre.blue;
+
   if(e.hp / e.maxHp < 0.20){
+    // fugir pro spawn (sem muita separação)
     moveAI(e, e.spawnX, e.spawnY);
     return;
   }
-  if(closest){
+
+  // compute avoidance vector
+  const avoid = avoidanceOffset(e);
+  const avoidScale = 1.0;
+
+  if (closest) {
     const d = dist(e.x,e.y,closest.x,closest.y);
+    const ang = Math.atan2(closest.y - e.y, closest.x - e.x);
+    // target ligeiramente deslocado pelo vetor de evasão e pelo offset único do brawler
+    const targetX = closest.x + avoid.x * avoidScale + e._offset.x * 0.6;
+    const targetY = closest.y + avoid.y * avoidScale + e._offset.y * 0.6;
+    // mover enquanto atira
+    moveAI(e, targetX, targetY);
     if(d <= e.range + 6){
-      const ang = Math.atan2(closest.y - e.y, closest.x - e.x);
       fire(e, ang);
-    } else {
-      moveAI(e, closest.x, closest.y);
     }
     return;
   }
+
+  // sem inimigo visível: avançar para o cofre inimigo, com displacement para evitar pile-on e paredes
   const dC = dist(e.x,e.y, enemyCofre.x + enemyCofre.w/2, enemyCofre.y + enemyCofre.h/2);
+  const angC = Math.atan2((enemyCofre.y+enemyCofre.h/2)-e.y, (enemyCofre.x+enemyCofre.w/2)-e.x);
+  // usa offset único para que nem todos tentem o mesmo pixel
+  const targetCofreX = enemyCofre.x + enemyCofre.w/2 + avoid.x * avoidScale * 1.1 + e._offset.x * 0.9;
+  const targetCofreY = enemyCofre.y + enemyCofre.h/2 + avoid.y * avoidScale * 1.1 + e._offset.y * 0.9;
+  moveAI(e, targetCofreX, targetCofreY);
   if(dC <= e.range + 24){
-    const ang = Math.atan2((enemyCofre.y+enemyCofre.h/2)-e.y, (enemyCofre.x+enemyCofre.w/2)-e.x);
-    fire(e, ang);
-  } else {
-    moveAI(e, enemyCofre.x + enemyCofre.w/2, enemyCofre.y + enemyCofre.h/2);
+    fire(e, angC);
+  }
+}
+
+// adicional: separação pós-movimento para resolver quaisquer sobreposições restantes
+function separateEntities(){
+  for(let i=0;i<entities.length;i++){
+    const a = entities[i];
+    if(!a.alive) continue;
+    for(let j=i+1;j<entities.length;j++){
+      const b = entities[j];
+      if(!b.alive) continue;
+      const d = dist(a.x,a.y,b.x,b.y);
+      const minD = a.radius + b.radius + 2; // espaço mínimo entre eles
+      if(d > 0 && d < minD){
+        const overlap = (minD - d);
+        const nx = (a.x - b.x) / d;
+        const ny = (a.y - b.y) / d;
+        // empurra cada um metade da sobreposição, com limites para não causar teleporte
+        const push = Math.min(overlap * 0.52, 6);
+        a.x += nx * push;
+        a.y += ny * push;
+        b.x -= nx * push;
+        b.y -= ny * push;
+        // garante não ficar preso em paredes
+        resolveWallCollision(a);
+        resolveWallCollision(b);
+      }
+    }
   }
 }
 
@@ -558,7 +804,7 @@ function resolveWallCollision(e){
   e.y = clamp(e.y, e.radius, WORLD.h - e.radius);
 }
 
-/* ----- Atualização principal: agora com suporte a mobile touch movement, mas sem atirar enquanto segura ----- */
+/* ----- Atualização principal: suporte a joysticks mobile ----- */
 let lastTime = performance.now();
 function update(){
   if(!running) return;
@@ -600,17 +846,21 @@ function update(){
         }
       }
     } else {
-      // Mobile behaviour: se estiver tocando -> mover em direção ao toque (sem atirar enquanto segura)
-      if(touchState.active){
-        const dx = touchState.x - player.x;
-        const dy = touchState.y - player.y;
+      // Mobile movement via left joystick
+      if(leftStick.active){
+        const dx = leftStick.vx, dy = leftStick.vy;
         const len = Math.hypot(dx,dy) || 1;
         player.x += (dx/len) * player.speed;
         player.y += (dy/len) * player.speed;
         resolveWallCollision(player);
-        // NÃO atira aqui — o disparo acontece ao soltar (touchend)
-      } else {
-        // sem toque: não mexe nem atira
+      }
+
+      // Mobile aiming + auto-fire via right joystick
+      if(rightStick.active && rightStick.mag > 0.18){
+        // compute world angle from joystick angle
+        const ang = rightStick.ang;
+        // fire respects attackCooldown and ammo inside fire()
+        fire(player, ang);
       }
     }
   }
@@ -620,6 +870,9 @@ function update(){
     regenTick(e, dt);
     if(!e.isPlayer) aiUpdate(e);
   }
+
+  // separa entidades sobrepostas (resultado: bots não ficam grudados um no outro)
+  separateEntities();
 
   updateBullets(dt);
 
@@ -633,6 +886,7 @@ function update(){
     platformOverlay.style.display = 'none';
     overlay.style.display = 'flex';
     overlay.querySelector('h2').innerText = cofre.blue.hp <= 0 ? 'Time Vermelho Venceu!' : 'Time Azul Venceu!';
+    setJoystickVisible(false);
   }
 }
 
@@ -913,6 +1167,7 @@ function draw(){
     ctx.strokeStyle = 'rgba(255,255,255,0.9)';
     ctx.lineWidth = 1;
     ctx.stroke();
+    ctx.resume;
     ctx.restore();
   }
 
@@ -956,6 +1211,8 @@ function startGame(chosenClass){
   cofre.red.hp = cofre.red.maxHp = 5000;
   running = true;
   lastTime = performance.now();
+  // Exibir joysticks somente se o usuário escolheu mobile
+  setJoystickVisible(isMobile && running);
   if(!loopStarted){ loopStarted = true; gameLoop(); }
 }
 
@@ -973,25 +1230,46 @@ menuBtn.addEventListener('click', ()=>{
   running = false;
   platformOverlay.style.display = 'flex';
   overlay.style.display = 'none';
+  setJoystickVisible(false);
 });
 
 /* Platform choice clicks */
 chooseDesktop.addEventListener('click', ()=>{
   isMobile = false;
+  document.body.classList.remove('is-mobile');
   platformOverlay.style.display = 'none';
   overlay.style.display = 'flex';
+  setJoystickVisible(false);
 });
 chooseMobile.addEventListener('click', ()=>{
   isMobile = true;
+  document.body.classList.add('is-mobile');
   platformOverlay.style.display = 'none';
   overlay.style.display = 'flex';
+  setJoystickVisible(false); // aguardamos startGame para mostrar
 });
 
 /* Inicial */
 createMap();
 platformOverlay.style.display = 'flex';
 
+/* Ajuste de dimensionamento do canvas para ficar consistente com CSS */
+function resizeCanvasToDisplaySize(){
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.max(300, Math.floor(rect.width));
+  const h = Math.max(200, Math.floor(rect.height));
+  if(canvas.width !== w || canvas.height !== h){
+    canvas.width = w;
+    canvas.height = h;
+  }
+}
+window.addEventListener('resize', ()=>{ resizeCanvasToDisplaySize(); });
+resizeCanvasToDisplaySize();
+
+/* Utilities: quando o overlay some e o jogo começa, garantir joysticks se mobile */
+const observer = new MutationObserver(()=>{ resizeCanvasToDisplaySize(); });
+observer.observe(document.body, { attributes: true, childList: true, subtree: true });
+
 </script>
 </body>
 </html>
-
