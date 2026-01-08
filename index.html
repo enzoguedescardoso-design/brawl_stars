@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8"/>
-<title>MOBA Heist MVP — Mobile / Desktop (Velocidade Corrigida) — Bots Desgrudando — Joysticks + Super (Super Left) — Mortis</title>
+<title>MOBA Heist MVP — Mobile / Desktop (Velocidade Corrigida) — Bots Desgrudando — Joysticks + Super (Super Left) — Mortis + Colt + Nita</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
 <style>
   :root{
@@ -199,7 +199,7 @@
 <!-- Class selection overlay (aparece depois de escolher plataforma) -->
 <div id="overlay" class="overlay" style="display:none;">
   <div class="card-panel">
-    <h2 style="margin:0 0 8px 0">Escolha sua classe</h2>
+    <h2 style="margin:0 0 8px 0">Brawlers</h2>
     <div style="display:flex; justify-content:center; gap:10px; flex-wrap:wrap;">
       <div class="choice" onclick="startGame('piper')">
         <div style="font-size:16px; font-weight:900; margin-bottom:4px;">Piper</div>
@@ -216,6 +216,14 @@
       <div class="choice" onclick="startGame('mortis')">
         <div style="font-size:16px; font-weight:900; margin-bottom:4px;">Mortis</div>
         <small style="display:block; margin-top:4px; font-weight:700">Dash • causa dano ao colidir</small>
+      </div>
+      <div class="choice" onclick="startGame('colt')">
+        <div style="font-size:16px; font-weight:900; margin-bottom:4px;">Colt</div>
+        <small style="display:block; margin-top:4px; font-weight:700">5 tiros em linha • dano 20 por bala</small>
+      </div>
+      <div class="choice" onclick="startGame('nita')">
+        <div style="font-size:16px; font-weight:900; margin-bottom:4px;">Nita</div>
+        <small style="display:block; margin-top:4px; font-weight:700">Médio alcance • tiro largo • Super invoca aliado</small>
       </div>
     </div>
     <div style="text-align:center; margin-top:10px; font-size:13px; opacity:0.95">
@@ -267,7 +275,11 @@ const CLASSES = {
   piper: { hp:300, dmg:120, speed:3.9, range:500, spread:0, shots:1, ammoRecharge:1.8, attackCooldown:1.5 },
   bull:   { hp:700, dmg:50,  speed:2.6, range:100,  spread:Math.PI/5, shots:6, ammoRecharge:2.2, attackCooldown:1.2 },
   shelly: { hp:450, dmg:60,  speed:3.4, range:250, spread:Math.PI/5, shots:5, ammoRecharge:2.0, attackCooldown:1.7 },
-  mortis: { hp:380, dmg:60, speed:3.8, range:110, spread:0, shots:1, ammoRecharge:1.6, attackCooldown:2.0 }
+  mortis: { hp:400, dmg:60, speed:3.8, range:110, spread:0, shots:1, ammoRecharge:1.6, attackCooldown:2.0 },
+  // COLT: 10 tiros na mesma reta, 20 de dano por bala. Super só adiciona +3 ao dano de cada bala (mecânica já suportada por fireSuper).
+  colt:   { hp:420, dmg:20, speed:3.6, range:400, spread:0, shots:5, ammoRecharge:2.6, attackCooldown:2.0 },
+  // NITA: alcance médio, tiro largo (largura = brawler.width). Super invoca um aliado (bola azul maior) que só ataca ao tocar inimigo ou cofre.
+  nita:   { hp:450, dmg:70, speed:3.5, range:240, spread:0, shots:1, ammoRecharge:1.6, attackCooldown:1.6 }
 };
 
 let entities = [], bullets = [], bushes = [], walls = [];
@@ -608,7 +620,6 @@ function fire(e, angle){
   e.ammo -= 1;
   e.lastAmmoTime = t;
   // cada vez que dispara (ataque normal) acumula 1 de super (max 10)
-  
 
   if(e.classType === 'mortis'){
     // Mortis: realiza um curto dash que causa dano igual ao shelly ao colidir com brawlers
@@ -617,6 +628,29 @@ function fire(e, angle){
     const dashSpeed = 14; // pixels per frame-ish (we'll move by vx/vy each update without dt for snappier dash)
     const damage = CLASSES.shelly.dmg; // dano igual ao shelly
     startDash(e, angle, dashDuration, dashSpeed, damage);
+    return;
+  }
+
+  // NITA: disparo largo — raio do projétil proporcional ao tamanho do brawler
+  if(e.classType === 'nita'){
+    // projétil largo, r ~ brawler.radius + 2
+    createBullet(e, angle, e.dmg, Math.max(6, Math.round(e.radius + 2)));
+    return;
+  }
+
+  // COLT: atira os projéteis sequencialmente (um atrás do outro)
+  if(e.classType === 'colt'){
+    const shots = e.shots || 10;
+    const intervalSec = 0.06; // intervalo entre cada tiro (em segundos)
+    for(let i=0;i<shots;i++){
+      (function(idx){
+        setTimeout(()=>{
+          // se o brawler morreu/foi desinstanciado, não atirar
+          if(!e.alive) return;
+          createBullet(e, angle, e.dmg);
+        }, Math.round(intervalSec * 1000 * idx));
+      })(i);
+    }
     return;
   }
 
@@ -630,6 +664,7 @@ function fire(e, angle){
     }
   }
 }
+
 function fireSuper(e, angle){
   if(!e.alive) return;
   if((e.superCharge || 0) < 10) return; // precisa de 10 tiros
@@ -650,6 +685,28 @@ function fireSuper(e, angle){
     return;
   }
 
+  // NITA: super invoca um aliado (bola azul mais larga). O aliado só ataca ao encostar em inimigo ou cofre.
+  if(e.classType === 'nita'){
+    // spawn ally a alguns pixels à frente
+    createNitaBear(e, angle);
+    return;
+  }
+
+  // COLT: super também dispara os 10 tiros em sequência, cada um com +3 de dano
+  if(e.classType === 'colt'){
+    const shots = e.shots || 10;
+    const intervalSec = 0.06;
+    for(let i=0;i<shots;i++){
+      (function(idx){
+        setTimeout(()=>{
+          if(!e.alive) return;
+          createBullet(e, angle, superDmg);
+        }, Math.round(intervalSec * 1000 * idx));
+      })(i);
+    }
+    return;
+  }
+
   if(e.shots === 1) createBullet(e, angle, superDmg);
   else {
     for(let i=0;i<e.shots;i++){
@@ -659,8 +716,8 @@ function fireSuper(e, angle){
   }
 }
 
-/* Create bullet accepts dmg override */
-function createBullet(e, angle, dmg){
+/* Create bullet accepts dmg override and optional radius */
+function createBullet(e, angle, dmg, rArg){
   // Use max distance based on shooter's range so bullets stop after traveling that distance
   const projSpd = e.projSpeed || 10; // pixels per frame (kept for motion)
   const maxRange = (typeof e.range === 'number') ? e.range : 600;
@@ -677,11 +734,44 @@ function createBullet(e, angle, dmg){
     ownerId: e.id,
     team: e.team,
     dmg: dmg || e.dmg,
-    r: 4,
+    r: (rArg !== undefined) ? rArg : 4,
     startX: startX,
     startY: startY,
     maxDist: maxRange
   });
+}
+
+/* Create Nita's bear ally */
+function createNitaBear(owner, angle){
+  const bx = owner.x + Math.cos(angle) * (owner.radius + 18);
+  const by = owner.y + Math.sin(angle) * (owner.radius + 18);
+  const bear = {
+    id: 'bear_' + Math.random().toString(36).slice(2,9),
+    x: bx, y: by, vx:0, vy:0,
+    team: owner.team,
+    classType: 'nita_bear',
+    isPlayer: false,
+    hp: 500,
+    maxHp: 500,
+    radius: Math.round(owner.radius * 1.5) + 2, // um pouco mais larga que Nita
+    speed: 3.2,
+    dmg: 90, // dano ao tocar
+    alive: true,
+    respawnAt: null, // IMPORTANT: não reaparece sozinho
+    spawnX: bx, spawnY: by,
+    ownerId: owner.id,
+    // comportamento/estado extra para compatibilidade com o motor
+    _jit: Math.random() * Math.PI * 2,
+    _offset: { x: 0, y: 0 },
+    lastShotAt: -999,
+    lastDamagedAt: -999,
+    ammoCapacity: 0,
+    ammo: 0,
+    ammoRecharge: 1.6,
+    // mark as a special entity so other systems can treat differently
+    isNitaBear: true
+  };
+  entities.push(bear);
 }
 
 function damageEntity(target, amount){
@@ -690,7 +780,9 @@ function damageEntity(target, amount){
   target.lastDamagedAt = performance.now()/1000;
   if(target.hp <= 0){
     target.alive = false;
-    target.respawnAt = performance.now()/1000 + 5.0;
+    // se for um brawler normal, aplicamos respawn. Mas se for nita_bear, ele NÃO deve reaparecer até nova super
+    if(!target.isNitaBear) target.respawnAt = performance.now()/1000 + 5.0;
+    else target.respawnAt = null; // stays dead until reinvocado
   }
 }
 function handleRespawns(){
@@ -811,11 +903,46 @@ function avoidanceOffset(e){
 /* ----- AI update: usa avoidanceOffset para desgrudar dos aliados, inimigos, paredes e cofres ----- */
 function aiUpdate(e){
   if(e.isPlayer || !e.alive) return;
+
+  // Special behaviour for Nita's bear: move towards closest enemy or enemy chest; only damage on touch (then die)
+  if(e.classType === 'nita_bear'){
+    const enemies = entities.filter(x => x.team !== e.team && x.alive);
+    let target = null; let td = Infinity;
+    for(const en of enemies){
+      const d = dist(e.x, e.y, en.x, en.y);
+      if(d < td){ td = d; target = en; }
+    }
+    // if no enemy visible, go to enemy chest
+    if(!target){
+      const enemyCofre = e.team === 'blue' ? cofre.red : cofre.blue;
+      moveAI(e, enemyCofre.x + enemyCofre.w/2, enemyCofre.y + enemyCofre.h/2);
+      const dC = dist(e.x, e.y, enemyCofre.x + enemyCofre.w/2, enemyCofre.y + enemyCofre.h/2);
+      if(dC <= e.radius + Math.max(enemyCofre.w, enemyCofre.h)/2){
+        // touch chest -> damage and die
+        const dmg = e.dmg || 60;
+        const enemyKey = e.team === 'blue' ? 'red' : 'blue';
+        cofre[enemyKey].hp = Math.max(0, cofre[enemyKey].hp - dmg);
+        e.alive = false; e.respawnAt = null; // won't respawn
+      }
+      return;
+    }
+
+    // move towards target
+    moveAI(e, target.x, target.y);
+    const d = dist(e.x, e.y, target.x, target.y);
+    if(d <= e.radius + target.radius){
+      // touch: apply damage and the bear dies (must be recasted by another super)
+      damageEntity(target, e.dmg || 60);
+      e.alive = false; e.respawnAt = null;
+    }
+    return;
+  }
+
   const enemies = entities.filter(x => x.team !== e.team && x.alive);
   let closest = null; let cd = Infinity;
   for(const en of enemies){
     if(!isVisibleTo(e, en)) continue;
-    const d = dist(e.x,e.y,en.x,en.y);
+    const d = dist(en.x,en.y,e.x,e.y);
     if(d < cd){ cd = d; closest = en; }
   }
   const enemyCofre = e.team === 'blue' ? cofre.red : cofre.blue;
@@ -1243,6 +1370,22 @@ function drawBrawler(e){
     ctx.stroke();
   }
 
+  // Special draw for Nita's bear
+  if(e.classType === 'nita_bear'){
+    ctx.beginPath();
+    // blue-ish ball for the ally
+    ctx.fillStyle = radialGradient(ctx, cx - r*0.2, cy - r*0.3, r, '#6fb7ff', '#1a6fb0');
+    ctx.arc(cx, cy, r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.stroke();
+    // little shine
+    ctx.beginPath(); ctx.ellipse(cx - r*0.25, cy - r*0.25, r*0.6, r*0.45, -0.3, 0, Math.PI*2); ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fill();
+    ctx.restore();
+    return;
+  }
+
   ctx.beginPath();
   ctx.fillStyle = radialGradient(ctx, cx - r*0.3, cy - r*0.4, r, centerColor, edgeColor);
   ctx.arc(cx, cy, r, 0, Math.PI*2);
@@ -1278,6 +1421,14 @@ function drawBrawler(e){
     ctx.quadraticCurveTo(cx, cy - r*1.2, cx + r*0.8, cy - r*0.4);
     ctx.fillStyle = 'rgba(0,0,0,0.18)';
     ctx.fill();
+  } else if(e.classType === 'colt'){
+    // pequeno traço para Colt (indicando cano)
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(cx + r*0.5, cy - 2, r, 4);
+  } else if(e.classType === 'nita'){
+    // simple visual tweak for Nita: small ear/mark
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.beginPath(); ctx.arc(cx - r*0.35, cy - r*0.6, r*0.25, 0, Math.PI*2); ctx.fill();
   }
   const hpRatio = e.hp / e.maxHp;
   const bw = e.radius * 2.8;
@@ -1428,7 +1579,8 @@ function spawnTeams(chosenClass){
   spawn('blue', blueSpawnX, blueSpawnY-60, chosenClass, true);
   spawn('blue', blueSpawnX, blueSpawnY + 20, 'shelly');
   spawn('blue', blueSpawnX, blueSpawnY + 100, 'bull');
-  spawn('red', redSpawnX, redSpawnY-100, 'piper');
+  // coloquei um Colt no time inimigo para testar a nova classe também
+  spawn('red', redSpawnX, redSpawnY-100, 'colt');
   spawn('red', redSpawnX, redSpawnY + 20, 'shelly');
   spawn('red', redSpawnX, redSpawnY + 100, 'bull');
 }
