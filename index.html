@@ -225,6 +225,12 @@
         <div style="font-size:16px; font-weight:900; margin-bottom:4px;">Nita</div>
         <small style="display:block; margin-top:4px; font-weight:700">Médio alcance • tiro largo • Super invoca aliado</small>
       </div>
+      <div class="choice" onclick="startGame('jessie')">
+        <div style="font-size:16px; font-weight:900; margin-bottom:4px;">Jessie</div>
+        <small style="display:block; margin-top:4px; font-weight:700">Médio alcance • tiro mais longo e fino • Super: torreta fixa</small>
+      </div>
+        <small style="display:block; margin-top:4px; font-weight:700">Médio alcance • tiro largo • Super invoca aliado</small>
+      </div>
     </div>
     <div style="text-align:center; margin-top:10px; font-size:13px; opacity:0.95">
       Controles Desktop: <strong>W A S D</strong> para mover • Mouse para mirar • Clique esquerdo para atirar (Mortis: dash) • Clique direito para Super (quando carregado)
@@ -278,8 +284,10 @@ const CLASSES = {
   mortis: { hp:400, dmg:60, speed:3.8, range:110, spread:0, shots:1, ammoRecharge:1.6, attackCooldown:2.0 },
   // COLT: 10 tiros na mesma reta, 20 de dano por bala. Super só adiciona +3 ao dano de cada bala (mecânica já suportada por fireSuper).
   colt:   { hp:420, dmg:20, speed:3.6, range:400, spread:0, shots:5, ammoRecharge:2.6, attackCooldown:2.0 },
-  // NITA: alcance médio, tiro largo (largura = brawler.width). Super invoca um aliado (bola azul maior) que só ataca ao tocar inimigo ou cofre.
-  nita:   { hp:450, dmg:70, speed:3.5, range:240, spread:0, shots:1, ammoRecharge:1.6, attackCooldown:1.6 }
+  // NITA: alcance médio, tiro largo (largura = brawler.width). Super invoca aliado (bola azul maior) que só ataca ao encostar em inimigo ou cofre.
+  nita:   { hp:450, dmg:70, speed:3.5, range:240, spread:0, shots:1, ammoRecharge:1.6, attackCooldown:1.6 },
+  // JESSIE: similar à Nita, ataque um pouco mais longo e mais fino. Super: torreta fixa que atira 2 tiros/s.
+  jessie: { hp:460, dmg:70, speed:3.6, range:280, spread:0, shots:1, ammoRecharge:1.6, attackCooldown:1.8 }
 };
 
 let entities = [], bullets = [], bushes = [], walls = [];
@@ -622,30 +630,32 @@ function fire(e, angle){
   // cada vez que dispara (ataque normal) acumula 1 de super (max 10)
 
   if(e.classType === 'mortis'){
-    // Mortis: realiza um curto dash que causa dano igual ao shelly ao colidir com brawlers
-    // dash parameters: short duration, fast speed
-    const dashDuration = 0.18; // segundos
-    const dashSpeed = 14; // pixels per frame-ish (we'll move by vx/vy each update without dt for snappier dash)
-    const damage = CLASSES.shelly.dmg; // dano igual ao shelly
+    const dashDuration = 0.18;
+    const dashSpeed = 14;
+    const damage = CLASSES.shelly.dmg;
     startDash(e, angle, dashDuration, dashSpeed, damage);
+    return;
+  }
+
+  // JESSIE: tiro mais longo e mais fino que Nita
+  if(e.classType === 'jessie'){
+    // projétil fino (r ~ 3..4)
+    createBullet(e, angle, e.dmg, Math.max(3, Math.round(e.radius - 3)));
     return;
   }
 
   // NITA: disparo largo — raio do projétil proporcional ao tamanho do brawler
   if(e.classType === 'nita'){
-    // projétil largo, r ~ brawler.radius + 2
     createBullet(e, angle, e.dmg, Math.max(6, Math.round(e.radius + 2)));
     return;
   }
 
-  // COLT: atira os projéteis sequencialmente (um atrás do outro)
   if(e.classType === 'colt'){
     const shots = e.shots || 10;
-    const intervalSec = 0.06; // intervalo entre cada tiro (em segundos)
+    const intervalSec = 0.06;
     for(let i=0;i<shots;i++){
       (function(idx){
         setTimeout(()=>{
-          // se o brawler morreu/foi desinstanciado, não atirar
           if(!e.alive) return;
           createBullet(e, angle, e.dmg);
         }, Math.round(intervalSec * 1000 * idx));
@@ -670,29 +680,30 @@ function fireSuper(e, angle){
   if((e.superCharge || 0) < 10) return; // precisa de 10 tiros
   const t = performance.now()/1000;
   if(t - (e.lastShot || -999) < e.attackCooldown) return;
-  // Super dispara mesma mecânica, mas +3 dano e consome a carga — não consome munição
   e.lastShot = t;
   e.lastShotAt = t;
   const superDmg = e.dmg + 3;
   e.superCharge = 0;
 
   if(e.classType === 'mortis'){
-    // Mortis: super é dash mais longo e +3 de dano
-    const dashDuration = 0.36; // mais longo
+    const dashDuration = 0.36;
     const dashSpeed = 16;
     const damage = CLASSES.shelly.dmg + 3;
     startDash(e, angle, dashDuration, dashSpeed, damage);
     return;
   }
 
-  // NITA: super invoca um aliado (bola azul mais larga). O aliado só ataca ao encostar em inimigo ou cofre.
+  // JESSIE: super invoca uma torreta fixa
+  if(e.classType === 'jessie'){
+    createJessieTurret(e, angle);
+    return;
+  }
+
   if(e.classType === 'nita'){
-    // spawn ally a alguns pixels à frente
     createNitaBear(e, angle);
     return;
   }
 
-  // COLT: super também dispara os 10 tiros em sequência, cada um com +3 de dano
   if(e.classType === 'colt'){
     const shots = e.shots || 10;
     const intervalSec = 0.06;
@@ -753,14 +764,13 @@ function createNitaBear(owner, angle){
     isPlayer: false,
     hp: 500,
     maxHp: 500,
-    radius: Math.round(owner.radius * 1.5) + 2, // um pouco mais larga que Nita
+    radius: Math.round(owner.radius * 1.5) + 2,
     speed: 3.2,
-    dmg: 90, // dano ao tocar
+    dmg: 90,
     alive: true,
-    respawnAt: null, // IMPORTANT: não reaparece sozinho
+    respawnAt: null,
     spawnX: bx, spawnY: by,
     ownerId: owner.id,
-    // comportamento/estado extra para compatibilidade com o motor
     _jit: Math.random() * Math.PI * 2,
     _offset: { x: 0, y: 0 },
     lastShotAt: -999,
@@ -768,10 +778,40 @@ function createNitaBear(owner, angle){
     ammoCapacity: 0,
     ammo: 0,
     ammoRecharge: 1.6,
-    // mark as a special entity so other systems can treat differently
+    lastAttackAt: -999,
+    attackCooldown: 0.6,
     isNitaBear: true
   };
   entities.push(bear);
+}
+
+// Create Jessie turret (fixed, fires 2 shots per second)
+function createJessieTurret(owner, angle){
+  const bx = owner.x + Math.cos(angle) * (owner.radius + 18);
+  const by = owner.y + Math.sin(angle) * (owner.radius + 18);
+  const turret = {
+    id: 'turret_' + Math.random().toString(36).slice(2,9),
+    x: bx, y: by, vx:0, vy:0,
+    team: owner.team,
+    classType: 'jessie_turret',
+    isPlayer: false,
+    hp: 400,
+    maxHp: 400,
+    radius: Math.round(owner.radius * 1.6) + 2,
+    speed: 0,
+    dmg: 50,
+    alive: true,
+    respawnAt: null,
+    spawnX: bx, spawnY: by,
+    ownerId: owner.id,
+    lastShotAt: -999,
+    fireInterval: 0.5, // 2 shots per second
+    range: 320,
+    ammoCapacity: 0,
+    ammo: 0,
+    isJessieTurret: true
+  };
+  entities.push(turret);
 }
 
 function damageEntity(target, amount){
@@ -780,9 +820,10 @@ function damageEntity(target, amount){
   target.lastDamagedAt = performance.now()/1000;
   if(target.hp <= 0){
     target.alive = false;
-    // se for um brawler normal, aplicamos respawn. Mas se for nita_bear, ele NÃO deve reaparecer até nova super
-    if(!target.isNitaBear) target.respawnAt = performance.now()/1000 + 5.0;
-    else target.respawnAt = null; // stays dead until reinvocado
+    // se for um brawler normal, aplicamos respawn.
+    // Nita bear e a torreta da Jessie NÃO reaparecem automaticamente; voltam apenas quando a respectiva super for usada de novo.
+    if(!target.isNitaBear && !target.isJessieTurret) target.respawnAt = performance.now()/1000 + 5.0;
+    else target.respawnAt = null; // stays dead until reinvoked by super
   }
 }
 function handleRespawns(){
@@ -904,7 +945,7 @@ function avoidanceOffset(e){
 function aiUpdate(e){
   if(e.isPlayer || !e.alive) return;
 
-  // Special behaviour for Nita's bear: move towards closest enemy or enemy chest; only damage on touch (then die)
+  // Special behaviour for Nita's bear: move towards closest enemy or enemy chest; attack on touch but doesn't die immediately
   if(e.classType === 'nita_bear'){
     const enemies = entities.filter(x => x.team !== e.team && x.alive);
     let target = null; let td = Infinity;
@@ -912,28 +953,49 @@ function aiUpdate(e){
       const d = dist(e.x, e.y, en.x, en.y);
       if(d < td){ td = d; target = en; }
     }
-    // if no enemy visible, go to enemy chest
     if(!target){
       const enemyCofre = e.team === 'blue' ? cofre.red : cofre.blue;
       moveAI(e, enemyCofre.x + enemyCofre.w/2, enemyCofre.y + enemyCofre.h/2);
       const dC = dist(e.x, e.y, enemyCofre.x + enemyCofre.w/2, enemyCofre.y + enemyCofre.h/2);
       if(dC <= e.radius + Math.max(enemyCofre.w, enemyCofre.h)/2){
-        // touch chest -> damage and die
         const dmg = e.dmg || 60;
         const enemyKey = e.team === 'blue' ? 'red' : 'blue';
         cofre[enemyKey].hp = Math.max(0, cofre[enemyKey].hp - dmg);
-        e.alive = false; e.respawnAt = null; // won't respawn
+        e.alive = false; e.respawnAt = null;
       }
       return;
     }
-
-    // move towards target
     moveAI(e, target.x, target.y);
     const d = dist(e.x, e.y, target.x, target.y);
+    const now = performance.now()/1000;
     if(d <= e.radius + target.radius){
-      // touch: apply damage and the bear dies (must be recasted by another super)
-      damageEntity(target, e.dmg || 60);
-      e.alive = false; e.respawnAt = null;
+      if(now - (e.lastAttackAt || -999) >= (e.attackCooldown || 0.6)){
+        damageEntity(target, e.dmg || 60);
+        e.lastAttackAt = now;
+        const owner = entities.find(x => x.id === e.ownerId);
+        if(owner) owner.superCharge = Math.min(10, (owner.superCharge||0) + 1);
+      }
+    }
+    return;
+  }
+
+  // Special behaviour for Jessie's turret: stays fixed and fires at enemies (2 shots/sec)
+  if(e.classType === 'jessie_turret'){
+    const enemies = entities.filter(x => x.team !== e.team && x.alive);
+    let closest = null; let cd = Infinity;
+    for(const en of enemies){
+      const d = dist(e.x, e.y, en.x, en.y);
+      if(d < cd){ cd = d; closest = en; }
+    }
+    if(closest){
+      const now = performance.now()/1000;
+      if(cd <= e.range){
+        if(now - (e.lastShotAt || -999) >= (e.fireInterval || 0.5)){
+          const ang = Math.atan2(closest.y - e.y, closest.x - e.x);
+          createBullet(e, ang, e.dmg, 3);
+          e.lastShotAt = now;
+        }
+      }
     }
     return;
   }
@@ -948,35 +1010,28 @@ function aiUpdate(e){
   const enemyCofre = e.team === 'blue' ? cofre.red : cofre.blue;
 
   if(e.hp / e.maxHp < 0.20){
-    // fugir pro spawn (sem muita separação)
     moveAI(e, e.spawnX, e.spawnY);
     return;
   }
 
-  // compute avoidance vector
   const avoid = avoidanceOffset(e);
   const avoidScale = 1.0;
 
   if (closest) {
     const d = dist(e.x,e.y,closest.x,closest.y);
     const ang = Math.atan2(closest.y - e.y, closest.x - e.x);
-    // target ligeiramente deslocado pelo vetor de evasão e pelo offset único do brawler
     const targetX = closest.x + avoid.x * avoidScale + e._offset.x * 0.6;
     const targetY = closest.y + avoid.y * avoidScale + e._offset.y * 0.6;
-    // mover enquanto atira
     moveAI(e, targetX, targetY);
     if(d <= e.range + 6){
-      // se tem super pronto, usa super, senão normal
       if(e.superCharge >= 10) fireSuper(e, ang);
       else fire(e, ang);
     }
     return;
   }
 
-  // sem inimigo visível: avançar para o cofre inimigo, com displacement para evitar pile-on e paredes
   const dC = dist(e.x,e.y, enemyCofre.x + enemyCofre.w/2, enemyCofre.y + enemyCofre.h/2);
   const angC = Math.atan2((enemyCofre.y+enemyCofre.h/2)-e.y, (enemyCofre.x+enemyCofre.w/2)-e.x);
-  // usa offset único para que nem todos tentem o mesmo pixel
   const targetCofreX = enemyCofre.x + enemyCofre.w/2 + avoid.x * avoidScale * 1.1 + e._offset.x * 0.9;
   const targetCofreY = enemyCofre.y + enemyCofre.h/2 + avoid.y * avoidScale * 1.1 + e._offset.y * 0.9;
   moveAI(e, targetCofreX, targetCofreY);
@@ -1000,7 +1055,22 @@ function separateEntities(){
         const overlap = (minD - d);
         const nx = (a.x - b.x) / d;
         const ny = (a.y - b.y) / d;
-        // empurra cada um metade da sobreposição, com limites para não causar teleporte
+        // se um dos dois for uma torreta da Jessie, não empurre a torreta — só empurre o outro
+        if(a.isJessieTurret && !b.isJessieTurret){
+          const push = Math.min(overlap * 1.02, 8);
+          b.x -= nx * push;
+          b.y -= ny * push;
+          resolveWallCollision(b);
+          continue;
+        }
+        if(b.isJessieTurret && !a.isJessieTurret){
+          const push = Math.min(overlap * 1.02, 8);
+          a.x += nx * push;
+          a.y += ny * push;
+          resolveWallCollision(a);
+          continue;
+        }
+        // se ambos não forem torretas, empurra cada um metade da sobreposição
         const push = Math.min(overlap * 0.52, 6);
         a.x += nx * push;
         a.y += ny * push;
@@ -1382,6 +1452,18 @@ function drawBrawler(e){
     ctx.stroke();
     // little shine
     ctx.beginPath(); ctx.ellipse(cx - r*0.25, cy - r*0.25, r*0.6, r*0.45, -0.3, 0, Math.PI*2); ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fill();
+
+    // --- DESENHA A BARRA DE VIDA DO URSO (VISUAL) ---
+    const hpRatioBear = (e.maxHp && e.maxHp>0) ? (e.hp / e.maxHp) : 1.0;
+    const bw = e.radius * 2.8;
+    const bx = e.x - bw/2, by = e.y - e.radius - 12;
+    ctx.globalAlpha = 1.0;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(bx,by,bw,8);
+    ctx.fillStyle = hpRatioBear>0.5 ? '#2b8' : (hpRatioBear>0.2 ? '#fa0' : '#f33');
+    ctx.fillRect(bx+1, by+1, (bw-2) * clamp(hpRatioBear,0,1), 6);
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.strokeRect(bx,by,bw,8);
+    // --- fim barra de vida ---
+
     ctx.restore();
     return;
   }
