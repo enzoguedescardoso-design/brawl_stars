@@ -198,6 +198,7 @@
 
 <!-- Class selection overlay (aparece depois de escolher plataforma) -->
 <div id="overlay" class="overlay" style="display:none;">
+  <!-- CORRIGIDO: painel de Brawlers reescrito corretamente -->
   <div class="card-panel">
     <h2 style="margin:0 0 8px 0">Brawlers</h2>
     <div style="display:flex; justify-content:center; gap:10px; flex-wrap:wrap;">
@@ -229,9 +230,8 @@
         <div style="font-size:16px; font-weight:900; margin-bottom:4px;">Jessie</div>
         <small style="display:block; margin-top:4px; font-weight:700">Médio alcance • tiro mais longo e fino • Super: torreta fixa</small>
       </div>
-        <small style="display:block; margin-top:4px; font-weight:700">Médio alcance • tiro largo • Super invoca aliado</small>
-      </div>
     </div>
+
     <div style="text-align:center; margin-top:10px; font-size:13px; opacity:0.95">
       Controles Desktop: <strong>W A S D</strong> para mover • Mouse para mirar • Clique esquerdo para atirar (Mortis: dash) • Clique direito para Super (quando carregado)
       <br/>
@@ -278,16 +278,16 @@ let loopStarted = false;
 
 // Velocidades aumentadas levemente conforme pedido
 const CLASSES = {
-  piper: { hp:300, dmg:120, speed:3.9, range:500, spread:0, shots:1, ammoRecharge:1.8, attackCooldown:1.5 },
-  bull:   { hp:700, dmg:50,  speed:2.6, range:100,  spread:Math.PI/5, shots:6, ammoRecharge:2.2, attackCooldown:1.2 },
-  shelly: { hp:450, dmg:60,  speed:3.4, range:250, spread:Math.PI/5, shots:5, ammoRecharge:2.0, attackCooldown:1.7 },
-  mortis: { hp:400, dmg:60, speed:3.8, range:110, spread:0, shots:1, ammoRecharge:1.6, attackCooldown:2.0 },
-  // COLT: 10 tiros na mesma reta, 20 de dano por bala. Super só adiciona +3 ao dano de cada bala (mecânica já suportada por fireSuper).
-  colt:   { hp:420, dmg:20, speed:3.6, range:400, spread:0, shots:5, ammoRecharge:2.6, attackCooldown:2.0 },
+  piper: { hp:300, dmg:120, speed:3.9, range:500, spread:0, shots:1, ammoRecharge:1.8, attackCooldown:1.5, ammoCapacity:1 },
+  bull:   { hp:700, dmg:50,  speed:2.6, range:100,  spread:Math.PI/5, shots:6, ammoRecharge:2.2, attackCooldown:1.2, ammoCapacity:3 },
+  shelly: { hp:450, dmg:60,  speed:3.4, range:250, spread:Math.PI/5, shots:5, ammoRecharge:2.0, attackCooldown:1.7, ammoCapacity:3 },
+  mortis: { hp:400, dmg:60, speed:3.8, range:110, spread:0, shots:1, ammoRecharge:1.6, attackCooldown:2.0, ammoCapacity:3 },
+  // COLT: 5 tiros na mesma reta (configurado shots); 20 de dano por bala.
+  colt:   { hp:420, dmg:20, speed:3.6, range:400, spread:0, shots:5, ammoRecharge:2.6, attackCooldown:2.0, ammoCapacity:6 },
   // NITA: alcance médio, tiro largo (largura = brawler.width). Super invoca aliado (bola azul maior) que só ataca ao encostar em inimigo ou cofre.
-  nita:   { hp:450, dmg:70, speed:3.5, range:240, spread:0, shots:1, ammoRecharge:1.6, attackCooldown:1.6 },
+  nita:   { hp:450, dmg:70, speed:3.5, range:240, spread:0, shots:1, ammoRecharge:1.6, attackCooldown:1.6, ammoCapacity:3 },
   // JESSIE: similar à Nita, ataque um pouco mais longo e mais fino. Super: torreta fixa que atira 2 tiros/s.
-  jessie: { hp:460, dmg:70, speed:3.6, range:280, spread:0, shots:1, ammoRecharge:1.6, attackCooldown:1.8 }
+  jessie: { hp:460, dmg:70, speed:3.6, range:280, spread:0, shots:1, ammoRecharge:1.6, attackCooldown:1.8, ammoCapacity:3 }
 };
 
 let entities = [], bullets = [], bushes = [], walls = [];
@@ -549,9 +549,11 @@ function spawn(team, x, y, cls, isPlayer=false){
     hp:def.hp, maxHp:def.hp, radius:14,
     // velocidade igual para bots e jogador no desktop
     speed: (!isMobile) ? (baseSpeed + 2) : baseSpeed,
-    dmg:def.dmg, range:def.range, projSpeed: (def.range>300?12:10),
+    dmg:def.dmg, range:def.range,
+    // projSpeed agora em px/segundo (valor maior para compatibilidade com dt)
+    projSpeed: (def.range>300?1200:1000),
     shots:def.shots, spread:def.spread, attackCooldown:def.attackCooldown,
-    ammoCapacity:3, ammo:3, ammoRecharge:def.ammoRecharge, lastAmmoTime: performance.now()/1000,
+    ammoCapacity: def.ammoCapacity || 3, ammo: def.ammoCapacity || 3, ammoRecharge:def.ammoRecharge, lastAmmoTime: performance.now()/1000,
     lastShot:-999, lastDamagedAt:-999, alive:true, respawnAt:null,
     spawnX:x, spawnY:y, state:'idle', target:null,
     // jitter seed to break perfect symmetry
@@ -570,10 +572,7 @@ function spawn(team, x, y, cls, isPlayer=false){
 function rectCircleCollide(rx,ry,rw,rh,cx,cy,r){ const closestX = clamp(cx, rx, rx+rw); const closestY = clamp(cy, ry, ry+rh); const dx = cx-closestX; const dy = cy-closestY; return dx*dx + dy*dy <= r*r; }
 function circleCircleCollide(x1,y1,r1,x2,y2,r2){ return (x2-x1)*(x2-x1)+(y2-y1)*(y2-y1) <= (r1+r2)*(r1+r2); }
 
-/* ======== ADDED: collidesWithWalls (fix para ReferenceError) ========
-   Verifica colisões com cada parede e com os limites do mapa.
-   Retorna true se o círculo (cx,cy,radius) colidir com paredes ou ultrapassar limites.
-   =================================================================== */
+/* ======== ADDED: collidesWithWalls (fix para ReferenceError) ======== */
 function collidesWithWalls(cx, cy, radius){
   for(const w of walls){
     if(rectCircleCollide(w.x, w.y, w.w, w.h, cx, cy, radius)) return true;
@@ -607,17 +606,21 @@ function moveAI(e, tx, ty){
 }
 
 /* ----- Tiro normal e Super (super = normal +3 de dano) ----- */
+/* startDash: agora dashVx/dashVy são configurados em px/s * 60 (para manter sensação rápida)
+   e na atualização usamos dt para mover (portanto comportamento consistente com FPS variável) */
 function startDash(e, angle, durationSec, dashSpeed, damage){
   if(!e.alive) return;
   const now = performance.now()/1000;
   e.isDashing = true;
   e.dashEnd = now + durationSec;
-  e.dashVx = Math.cos(angle) * dashSpeed;
-  e.dashVy = Math.sin(angle) * dashSpeed;
+  // dashSpeed historicamente era "pixels per frame" pequeno (ex: 14). Multiplicamos por 60 para obter px/s aproximado.
+  e.dashVx = Math.cos(angle) * dashSpeed * 60;
+  e.dashVy = Math.sin(angle) * dashSpeed * 60;
   e.dashHitSet = new Set();
   // Mortis dashes do not consume ammo by design (optional). Super carrega apenas quando o ataque acerta um inimigo.
 }
 
+/* fire/createBullet agora usam projSpd em px/segundo e o update usa dt para mover bullets */
 function fire(e, angle){
   if(!e.alive) return;
   const t = performance.now()/1000;
@@ -627,7 +630,8 @@ function fire(e, angle){
   e.lastShotAt = t;
   e.ammo -= 1;
   e.lastAmmoTime = t;
-  // cada vez que dispara (ataque normal) acumula 1 de super (max 10)
+  // Nota: carregamos Super ao ACERTAR um inimigo (implementação no updateBullets).
+  // Se quiser mudar para 'carregar ao atirar', adicione: e.superCharge = Math.min(10, (e.superCharge||0) + 1);
 
   if(e.classType === 'mortis'){
     const dashDuration = 0.18;
@@ -677,7 +681,7 @@ function fire(e, angle){
 
 function fireSuper(e, angle){
   if(!e.alive) return;
-  if((e.superCharge || 0) < 10) return; // precisa de 10 tiros
+  if((e.superCharge || 0) < 10) return; // precisa de 10 tiros acertados (mantido)
   const t = performance.now()/1000;
   if(t - (e.lastShot || -999) < e.attackCooldown) return;
   e.lastShot = t;
@@ -727,18 +731,17 @@ function fireSuper(e, angle){
   }
 }
 
-/* Create bullet accepts dmg override and optional radius */
+/* Create bullet: projSpd em px/s; vida baseada em time e distância */
 function createBullet(e, angle, dmg, rArg){
-  // Use max distance based on shooter's range so bullets stop after traveling that distance
-  const projSpd = e.projSpeed || 10; // pixels per frame (kept for motion)
+  const projSpd = e.projSpeed || 1000; // px/s
   const maxRange = (typeof e.range === 'number') ? e.range : 600;
-  const lifeTime = Math.max(0.05, maxRange / projSpd); // fallback time-based life (seconds)
+  const lifeTime = Math.max(0.05, maxRange / projSpd); // seconds
   const startX = e.x + Math.cos(angle)*(e.radius+6);
   const startY = e.y + Math.sin(angle)*(e.radius+6);
   bullets.push({
     x: startX,
     y: startY,
-    vx: Math.cos(angle)*projSpd,
+    vx: Math.cos(angle)*projSpd, // px/s
     vy: Math.sin(angle)*projSpd,
     born: performance.now()/1000,
     life: lifeTime,
@@ -1103,22 +1106,24 @@ function regenTick(e, dt){
   }
 }
 
+/* updateBullets agora usa dt (s) e projVel em px/s */
 function updateBullets(dt){
-  const t = performance.now()/1000;
+  const tNow = performance.now()/1000;
   for(let i=bullets.length-1;i>=0;i--){
     const p = bullets[i];
-    p.x += p.vx;
-    p.y += p.vy;
-    // remove by distance (preferred) or by life time as fallback
-    if(p.maxDist !== undefined){
-      const travelled = Math.hypot(p.x - p.startX, p.y - p.startY);
-      if(travelled >= p.maxDist){ bullets.splice(i,1); continue; }
-    }
-    const t = performance.now()/1000;
-    if(t - p.born >= p.life){ bullets.splice(i,1); continue; }
+    // mover com base em velocidade px/s
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+
+    // remoção por distância (preferida) ou tempo como fallback
+    const travelled = Math.hypot(p.x - p.startX, p.y - p.startY);
+    if(p.maxDist !== undefined && travelled >= p.maxDist){ bullets.splice(i,1); continue; }
+
+    if(tNow - p.born >= p.life){ bullets.splice(i,1); continue; }
     let hitWall = false;
     for(const w of walls) if(rectCircleCollide(w.x,w.y,w.w,w.h, p.x,p.y,p.r)) { hitWall = true; break; }
     if(hitWall){ bullets.splice(i,1); continue; }
+
     if(p.team === 'blue'){
       if(rectCircleCollide(cofre.red.x, cofre.red.y, cofre.red.w, cofre.red.h, p.x,p.y,p.r)){
         cofre.red.hp = Math.max(0, cofre.red.hp - p.dmg);
@@ -1130,12 +1135,13 @@ function updateBullets(dt){
         bullets.splice(i,1); continue;
       }
     }
+
     for(const e of entities){
       if(!e.alive) continue;
       if(e.team === p.team) continue;
       if(circleCircleCollide(p.x,p.y,p.r, e.x,e.y, e.radius)){
         damageEntity(e, p.dmg);
-        // carregar super apenas quando o tiro ACERTA um inimigo
+        // carregar super apenas quando o tiro ACERTA um inimigo (comportamento mantido)
         const owner = entities.find(x => x.id === p.ownerId);
         if(owner) owner.superCharge = Math.min(10, (owner.superCharge||0) + 1);
         bullets.splice(i,1);
@@ -1195,7 +1201,7 @@ function update(){
       if(mouse.down){
         const ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
         if(performance.now()/1000 - (player.lastShot || -999) >= player.attackCooldown && player.ammo > 0){
-          // normal fire increments superCharge
+          // normal fire increments superCharge only when bullets hit (kept behavior)
           fire(player, ang);
         }
       }
@@ -1218,12 +1224,9 @@ function update(){
       }
 
       // superStick handled on touchend: user aims and releases to fire super
-      // (we also allow continuous super if user keeps touching and mag>threshold -> optional)
       if(superStick.active && superStick.mag > 0.95){
-        // quick hold-to-fire (rare), but main firing happens on touchend.
         if(player.superCharge >= 10){
           fireSuper(player, superStick.ang);
-          // prevent immediate repeat by resetting mag
           superStick.mag = 0;
           superKnob.style.transform = `translate(0px,0px)`;
           superStick.active = false;
@@ -1237,11 +1240,10 @@ function update(){
     regenTick(e, dt);
     if(!e.isPlayer) aiUpdate(e);
 
-    // dash movement handling (Mortis only; but generic properties exist)
+    // dash movement handling: agora usa dt (px/s stored in dashVx/dashVy)
     if(e.isDashing){
-      // move by dash velocity (we do not multiply by dt to keep dash snappy)
-      const nextX = e.x + e.dashVx;
-      const nextY = e.y + e.dashVy;
+      const nextX = e.x + e.dashVx * dt;
+      const nextY = e.y + e.dashVy * dt;
       // if next position collides with wall, end dash
       if(collidesWithWalls(nextX, nextY, e.radius)){
         e.isDashing = false;
@@ -1276,6 +1278,7 @@ function update(){
   // separa entidades sobrepostas (resultado: bots não ficam grudados um no outro)
   separateEntities();
 
+  // atualiza balas com dt (IMPORTANTE: agora updateBullets recebe dt)
   updateBullets(dt);
 
   if(player){
@@ -1433,7 +1436,7 @@ function drawBrawler(e){
   // se estiver dashando, desenhar um traço rápido atrás dele
   if(e.isDashing){
     ctx.beginPath();
-    ctx.moveTo(cx - e.dashVx*1.2, cy - e.dashVy*1.2);
+    ctx.moveTo(cx - e.dashVx*0.02, cy - e.dashVy*0.02);
     ctx.lineTo(cx, cy);
     ctx.lineWidth = 10;
     ctx.strokeStyle = 'rgba(255,255,255,0.08)';
@@ -1584,9 +1587,10 @@ function draw(){
     ctx.fillStyle = 'rgba(255,238,120,0.98)';
     ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
     ctx.fill();
+    // trail: p.vx/vy são px/s -> usar deslocamento pequeno baseado em ~1 frame (0.016s)
     ctx.beginPath();
     ctx.fillStyle = 'rgba(255,255,255,0.06)';
-    ctx.arc(p.x - p.vx*0.12, p.y - p.vy*0.12, p.r*0.8, 0, Math.PI*2);
+    ctx.arc(p.x - p.vx*0.016, p.y - p.vy*0.016, p.r*0.8, 0, Math.PI*2);
     ctx.fill();
   }
 
@@ -1720,14 +1724,20 @@ chooseMobile.addEventListener('click', ()=>{
 createMap();
 platformOverlay.style.display = 'flex';
 
-/* Ajuste de dimensionamento do canvas para ficar consistente com CSS */
+/* Ajuste de dimensionamento do canvas para ficar consistente com CSS e HiDPI */
 function resizeCanvasToDisplaySize(){
   const rect = canvas.getBoundingClientRect();
-  const w = Math.max(300, Math.floor(rect.width));
-  const h = Math.max(200, Math.floor(rect.height));
-  if(canvas.width !== w || canvas.height !== h){
+  const dpr = window.devicePixelRatio || 1;
+  const displayW = Math.max(300, Math.floor(rect.width));
+  const displayH = Math.max(200, Math.floor(rect.height));
+  const w = Math.round(displayW * dpr);
+  const h = Math.round(displayH * dpr);
+  if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w;
     canvas.height = h;
+    canvas.style.width = displayW + 'px';
+    canvas.style.height = displayH + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // escala para desenhar em px CSS
   }
 }
 window.addEventListener('resize', ()=>{ resizeCanvasToDisplaySize(); });
